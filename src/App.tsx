@@ -15,6 +15,7 @@ import ClientesList from "./pages/clientes/ClientesList";
 import Atendimento from "./pages/atendimento/Atendimento";
 import Configuracoes from "./pages/configuracoes/Configuracoes";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
+import CadastroAdvogado from "./pages/CadastroAdvogado";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Index />} />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route path="/cadastro/advogado" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <CadastroAdvogado />} />
 
       {/* Protected app routes */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>

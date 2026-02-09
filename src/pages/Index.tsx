@@ -62,7 +62,7 @@ export default function LandingPage() {
                 Entrar
               </Button>
             </Link>
-            <Link to="/login?register=true">
+            <Link to="/cadastro/advogado">
               <Button className="btn-accent text-sm px-5">
                 Testar Agora
               </Button>
@@ -100,7 +100,7 @@ export default function LandingPage() {
               </p>
 
               <div className="flex flex-col sm:flex-row gap-4 mt-10">
-                <Link to="/login?register=true">
+                <Link to="/cadastro/advogado">
                   <Button size="lg" className="btn-accent text-base px-8 h-13 font-semibold shadow-lg shadow-accent/25 hover:shadow-xl hover:shadow-accent/30 transition-all">
                     Começar Gratuitamente
                     <ArrowRight className="ml-2 h-5 w-5" />
@@ -201,7 +201,7 @@ export default function LandingPage() {
                 Desenvolvido por profissionais do direito que entendem as dores do dia a dia. Automatize o operacional e foque no que realmente importa: advogar.
               </p>
               <div className="mt-8">
-                <Link to="/login?register=true">
+                <Link to="/cadastro/advogado">
                   <Button className="btn-accent px-6">
                     Experimente 14 dias grátis
                     <ArrowRight className="ml-2 h-4 w-4" />
@@ -238,7 +238,7 @@ export default function LandingPage() {
             Experimente gratuitamente por 14 dias. Sem cartão de crédito. Sem compromisso.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to="/login?register=true">
+            <Link to="/cadastro/advogado">
               <Button size="lg" className="btn-accent text-base px-10 h-13 font-semibold shadow-lg shadow-accent/25">
                 Criar Conta Gratuita
                 <ArrowRight className="ml-2 h-5 w-5" />
