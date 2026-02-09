@@ -142,11 +142,8 @@ export default function Login() {
           </form>
 
           <p className="text-center text-sm text-muted-foreground mt-6">
-            {isRegister ? (
-              <>Já tem uma conta? <a href="/login" className="text-accent hover:underline font-medium">Entrar</a></>
-            ) : (
-              <>Não tem conta? <a href="/login?register=true" className="text-accent hover:underline font-medium">Criar conta</a></>
-            )}
+            Não tem conta?{' '}
+            <a href="/cadastro/advogado" className="text-accent hover:underline font-medium">Criar conta</a>
           </p>
         </div>
       </div>
