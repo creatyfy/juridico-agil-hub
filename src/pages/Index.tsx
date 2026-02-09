@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { Scale, Shield, Zap, MessageSquare, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Shield, Zap, MessageSquare, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import logo from '@/assets/logo-jarvis-jud.png';
 
 const features = [
   {
@@ -35,10 +36,7 @@ export default function LandingPage() {
       {/* Header */}
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto flex items-center justify-between h-16 px-4">
-          <div className="flex items-center gap-2">
-            <Scale className="h-7 w-7 text-accent" />
-            <span className="text-xl font-bold text-primary">JurisAI</span>
-          </div>
+          <img src={logo} alt="Jarvis Jud" className="h-8" />
           <div className="flex items-center gap-3">
             <Link to="/login">
               <Button variant="ghost" className="text-sm font-medium">Entrar</Button>
@@ -82,7 +80,7 @@ export default function LandingPage() {
       <section className="py-20 bg-background">
         <div className="container mx-auto px-4">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold">Por que advogados escolhem o JurisAI?</h2>
+            <h2 className="text-3xl font-bold">Por que advogados escolhem o Jarvis Jud?</h2>
             <p className="mt-3 text-muted-foreground text-lg">Menos trabalho manual, mais tempo para o que importa.</p>
           </div>
           <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
@@ -104,7 +102,7 @@ export default function LandingPage() {
             <div>
               <h2 className="text-3xl font-bold mb-4">Feito para advogados que valorizam seu tempo</h2>
               <p className="text-muted-foreground leading-relaxed">
-                O JurisAI foi desenvolvido por profissionais do direito que entendem as dores do dia a dia.
+                O Jarvis Jud foi desenvolvido por profissionais do direito que entendem as dores do dia a dia.
                 Nossa plataforma automatiza o que pode ser automatizado, deixando você livre para advogar.
               </p>
             </div>
@@ -139,11 +137,8 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="border-t py-8 bg-card">
         <div className="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Scale className="h-5 w-5 text-accent" />
-            <span className="font-semibold text-primary">JurisAI</span>
-          </div>
-          <p className="text-sm text-muted-foreground">© 2026 JurisAI. Todos os direitos reservados.</p>
+          <img src={logo} alt="Jarvis Jud" className="h-6" />
+          <p className="text-sm text-muted-foreground">© 2026 Jarvis Jud. Todos os direitos reservados.</p>
         </div>
       </footer>
     </div>

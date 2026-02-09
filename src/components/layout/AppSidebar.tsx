@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import logo from '@/assets/logo-jarvis-jud.png';
 
 interface MenuItem {
   label: string;
@@ -59,12 +60,9 @@ export default function AppSidebar() {
       )}
     >
       {/* Logo area */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
+      <div className="h-16 flex items-center justify-between px-3 border-b border-sidebar-border">
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <Scale className="h-6 w-6 text-sidebar-primary" />
-            <span className="text-lg font-bold text-sidebar-primary-foreground">JurisAI</span>
-          </div>
+          <img src={logo} alt="Jarvis Jud" className="h-7 brightness-0 invert" />
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
