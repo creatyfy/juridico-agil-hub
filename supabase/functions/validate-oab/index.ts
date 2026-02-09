@@ -8,41 +8,6 @@ const corsHeaders = {
 const validUFs = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT',
   'PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
 
-// Mock database of lawyers for realistic simulation
-// In production, replace with actual CNA API integration (requires authentication key)
-const mockLawyers: Record<string, { nome: string; status: 'ativo' | 'inativo'; tipo: string }> = {
-  // SP
-  '123456-SP': { nome: 'CARLOS EDUARDO MENDES DA SILVA', status: 'ativo', tipo: 'Advogado' },
-  '654321-SP': { nome: 'ANA BEATRIZ RODRIGUES FERREIRA', status: 'ativo', tipo: 'Advogado' },
-  '111111-SP': { nome: 'MARCOS ANTONIO PEREIRA LIMA', status: 'inativo', tipo: 'Advogado' },
-  '222222-SP': { nome: 'JULIANA CRISTINA ALMEIDA SANTOS', status: 'ativo', tipo: 'Advogado' },
-  '333333-SP': { nome: 'ROBERTO CARLOS OLIVEIRA NETO', status: 'ativo', tipo: 'Advogado' },
-  // RJ
-  '100200-RJ': { nome: 'FERNANDA LUIZA COSTA BARBOSA', status: 'ativo', tipo: 'Advogado' },
-  '200300-RJ': { nome: 'RICARDO AUGUSTO MARTINS FILHO', status: 'ativo', tipo: 'Advogado' },
-  '300400-RJ': { nome: 'PATRICIA HELENA SOUZA MOREIRA', status: 'inativo', tipo: 'Advogado' },
-  // MG
-  '26785-MG': { nome: 'LUCAS FERNANDO ARAÚJO RIBEIRO', status: 'ativo', tipo: 'Advogado' },
-  '50100-MG': { nome: 'MARIA CLARA DUARTE TEIXEIRA', status: 'ativo', tipo: 'Advogado' },
-  '75300-MG': { nome: 'JOÃO PEDRO CARVALHO MACHADO', status: 'ativo', tipo: 'Advogado' },
-  // DF
-  '10500-DF': { nome: 'CAMILA ANDRADE NOGUEIRA', status: 'ativo', tipo: 'Advogado' },
-  '20800-DF': { nome: 'THIAGO HENRIQUE BATISTA LOPES', status: 'ativo', tipo: 'Advogado' },
-  // RS
-  '45000-RS': { nome: 'GABRIELA SOUZA FONTANA', status: 'ativo', tipo: 'Advogado' },
-  '60200-RS': { nome: 'DIEGO RAFAEL WAGNER SCHMIDT', status: 'inativo', tipo: 'Advogado' },
-  // BA
-  '30100-BA': { nome: 'ANDERSON LUIS NASCIMENTO SANTOS', status: 'ativo', tipo: 'Advogado' },
-  // PR
-  '40500-PR': { nome: 'RAFAELA CRISTINA MENDONÇA PRADO', status: 'ativo', tipo: 'Advogado' },
-  // PE
-  '15700-PE': { nome: 'BRUNO HENRIQUE CAVALCANTI SILVA', status: 'ativo', tipo: 'Advogado' },
-  // CE
-  '25300-CE': { nome: 'LARISSA MARIA FREITAS GOMES', status: 'ativo', tipo: 'Advogado' },
-  // GO
-  '35600-GO': { nome: 'FELIPE AUGUSTO BORGES CUNHA', status: 'ativo', tipo: 'Advogado' },
-};
-
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -66,30 +31,74 @@ serve(async (req: Request) => {
     }
 
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
-    const key = `${cleanOab}-${uf}`;
+    const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
+
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: 'Serviço de consulta não configurado' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Simulate network delay (realistic API response time)
-    await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
+    // Strategy: Use Firecrawl Search to find the lawyer in public legal databases
+    // and OAB-related pages that index lawyer data
+    const searchQueries = [
+      `"OAB ${cleanOab}" "${uf}" advogado nome site:jusbrasil.com.br OR site:escavador.com OR site:oab`,
+      `advogado OAB/${uf} ${cleanOab} nome inscrição`,
+    ];
 
-    const lawyer = mockLawyers[key];
-
-    if (lawyer) {
-      console.log(`Found: ${lawyer.nome} - ${lawyer.status}`);
-      return new Response(
-        JSON.stringify({
-          nome: lawyer.nome,
-          status: lawyer.status,
-          inscricao: cleanOab,
-          uf,
-          tipo: lawyer.tipo,
+    for (const query of searchQueries) {
+      console.log(`Searching: ${query}`);
+      
+      const response = await fetch('https://api.firecrawl.dev/v1/search', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          limit: 5,
         }),
+      });
+
+      if (!response.ok) {
+        console.error(`Search failed: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const results = data.data || [];
+      
+      console.log(`Got ${results.length} search results`);
+
+      for (const result of results) {
+        const text = `${result.title || ''} ${result.description || ''} ${result.markdown || ''}`;
+        console.log(`Result: ${result.url} - ${(result.title || '').substring(0, 100)}`);
+        
+        const parsed = extractLawyerFromSearchResult(text, cleanOab, uf);
+        if (parsed) {
+          console.log(`Found: ${parsed.nome} - ${parsed.status}`);
+          return new Response(
+            JSON.stringify(parsed),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+    }
+
+    // If search didn't find, try scraping Escavador which indexes OAB data publicly
+    console.log('Trying Escavador...');
+    const escavadorResult = await tryEscavador(apiKey, cleanOab, uf);
+    if (escavadorResult) {
+      return new Response(
+        JSON.stringify(escavadorResult),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Not found in mock database
     console.log(`OAB ${cleanOab}/${uf} not found`);
     return new Response(
       JSON.stringify({ nome: null, status: 'nao_encontrado' }),
@@ -97,15 +106,127 @@ serve(async (req: Request) => {
     );
 
   } catch (error: unknown) {
-    console.error('Error in validate-oab:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error:', error);
     return new Response(
-      JSON.stringify({
-        nome: null,
-        status: 'nao_encontrado',
-        message: `Erro ao consultar OAB: ${errorMessage}`,
-      }),
+      JSON.stringify({ nome: null, status: 'nao_encontrado', message: 'Erro ao consultar OAB' }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
+async function tryEscavador(apiKey: string, oab: string, uf: string) {
+  try {
+    // Escavador publicly indexes lawyer profiles
+    const url = `https://www.escavador.com/sobre/advogado?oab=${oab}&estado=${uf}`;
+    
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url,
+        formats: ['markdown'],
+        onlyMainContent: true,
+        waitFor: 2000,
+      }),
+    });
+
+    const data = await response.json();
+    const content = data.data || data;
+    const markdown = content?.markdown || '';
+    
+    console.log(`Escavador response: ${response.status}, len=${markdown.length}`);
+    if (markdown.length > 50) {
+      console.log(`Escavador preview: ${markdown.substring(0, 500)}`);
+    }
+
+    if (markdown.length > 50) {
+      return extractLawyerFromSearchResult(markdown, oab, uf);
+    }
+  } catch (error) {
+    console.error('Escavador failed:', error);
+  }
+  return null;
+}
+
+function extractLawyerFromSearchResult(text: string, oab: string, uf: string) {
+  if (!text || text.length < 10) return null;
+
+  // Exclude false positive patterns
+  const excludeWords = ['RESULTADO', 'CONSULTA', 'CADASTRO', 'PESQUISAR', 'IMPORTANTE',
+    'PROVIMENTO', 'CONSELHO', 'NACIONAL', 'SECCIONAL', 'ORDEM', 'ADVOGADOS',
+    'BRASIL', 'FEDERAL', 'INSCRITOS', 'NOTÍCIAS', 'SERVIÇOS', 'ARTIGO',
+    'TRIBUNAL', 'JUDICIÁRIO', 'CONSTITUIÇÃO', 'JANEIRO', 'FEVEREIRO', 'MARÇO'];
+
+  // Patterns to find lawyer name associated with OAB number
+  const oabPattern = new RegExp(`OAB[/\\s]*(?:${uf})?[/\\s]*${oab}|${oab}[/\\s]*(?:OAB)?[/\\s]*${uf}`, 'i');
+  
+  if (!oabPattern.test(text)) {
+    // Also check if just the number is mentioned in context
+    if (!text.includes(oab)) return null;
+  }
+
+  // Try to find names near the OAB reference
+  const namePatterns = [
+    // "Dr./Dra. Name" or "Advogado(a) Name"
+    /(?:Dr\.?|Dra\.?|Advogad[oa])\s+([A-ZÀ-ÖØ-Ý][a-zà-öø-ý]+(?:\s+(?:de|da|do|dos|das|e)?\s*[A-ZÀ-ÖØ-Ýa-zà-öø-ý]+){1,7})/,
+    // ALL CAPS name (2+ words, 8-80 chars)  
+    /([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý\s\.]{7,79})/,
+    // Title + name format from Escavador/JusBrasil
+    /(?:Perfil|Nome|Advogad)[:\s]+([A-ZÀ-ÖØ-Ý][a-zà-öø-ý]+(?:\s+[A-Za-zÀ-ÖØ-Ýà-öø-ý]+){1,7})/i,
+    // Name in heading
+    /#{1,3}\s+([A-ZÀ-ÖØ-Ý][a-zà-öø-ý]+(?:\s+(?:de|da|do|dos|das|e)?\s*[A-ZÀ-ÖØ-Ýa-zà-öø-ý]+){1,7})/,
+    // Bold name
+    /\*\*([A-ZÀ-ÖØ-Ý][a-zà-öø-ý]+(?:\s+[A-Za-zÀ-ÖØ-Ýà-öø-ý]+){1,7})\*\*/,
+  ];
+
+  for (const pattern of namePatterns) {
+    const matches = text.match(new RegExp(pattern.source, pattern.flags + 'g')) || [];
+    
+    for (const fullMatch of matches) {
+      const nameMatch = fullMatch.match(pattern);
+      if (!nameMatch || !nameMatch[1]) continue;
+      
+      let candidate = nameMatch[1].trim().replace(/\s+/g, ' ');
+      const words = candidate.split(/\s+/);
+      
+      if (words.length >= 2 && candidate.length >= 8 && candidate.length <= 80) {
+        const isExcluded = excludeWords.some(w => candidate.toUpperCase().includes(w));
+        if (isExcluded) continue;
+
+        // Determine status
+        let status: 'ativo' | 'inativo' = 'ativo';
+        const lower = text.toLowerCase();
+        if (lower.includes('cancelad') || lower.includes('suspens') || 
+            lower.includes('licenciad') || lower.includes('inativ') || 
+            lower.includes('excluíd')) {
+          // Check if "inativo" is near the OAB number context
+          const oabIdx = lower.indexOf(oab);
+          if (oabIdx >= 0) {
+            const nearby = lower.substring(Math.max(0, oabIdx - 200), oabIdx + 200);
+            if (nearby.includes('cancelad') || nearby.includes('suspens') || 
+                nearby.includes('inativ')) {
+              status = 'inativo';
+            }
+          }
+        }
+
+        // Clean prefixes from name
+        let cleanName = candidate.toUpperCase()
+          .replace(/^(ADVOGAD[OA]\s+|DR\.?\s+|DRA\.?\s+)/i, '')
+          .trim();
+
+        return {
+          nome: cleanName,
+          status,
+          inscricao: oab,
+          uf,
+        };
+      }
+    }
+  }
+
+  return null;
+}
