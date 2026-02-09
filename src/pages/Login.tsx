@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, UserRole } from '@/contexts/AuthContext';
-import { Scale, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import logo from '@/assets/logo-jarvis-jud.png';
 
 type LoginTab = 'advogado' | 'cliente' | 'admin';
 
@@ -42,8 +43,7 @@ export default function Login() {
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 hero-section flex-col justify-center items-center p-12">
         <div className="max-w-md text-center">
-          <Scale className="h-16 w-16 text-accent mx-auto mb-6" />
-          <h1 className="text-4xl font-bold text-primary-foreground mb-4">JurisAI</h1>
+          <img src={logo} alt="Jarvis Jud" className="h-16 mx-auto mb-6 brightness-0 invert" />
           <p className="text-primary-foreground/80 text-lg leading-relaxed">
             Automação jurídica inteligente. Gerencie processos, atenda clientes e acompanhe movimentações em um só lugar.
           </p>
@@ -53,9 +53,8 @@ export default function Login() {
       {/* Right panel */}
       <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center gap-2 justify-center mb-8">
-            <Scale className="h-8 w-8 text-accent" />
-            <span className="text-2xl font-bold text-primary">JurisAI</span>
+          <div className="lg:hidden flex justify-center mb-8">
+            <img src={logo} alt="Jarvis Jud" className="h-10" />
           </div>
 
           <h2 className="text-2xl font-bold text-center mb-2">
@@ -88,95 +87,48 @@ export default function Login() {
               <>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Número da OAB</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: 123456/SP"
-                    value={form.field1}
-                    onChange={(e) => setForm({ ...form, field1: e.target.value })}
-                    className="input-field w-full"
-                  />
+                  <input type="text" placeholder="Ex: 123456/SP" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Senha</label>
                   <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="Sua senha"
-                      value={form.field2}
-                      onChange={(e) => setForm({ ...form, field2: e.target.value })}
-                      className="input-field w-full pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
+                    <input type={showPassword ? 'text' : 'password'} placeholder="Sua senha" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full pr-10" />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
               </>
             )}
-
             {activeTab === 'cliente' && (
               <>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">CPF</label>
-                  <input
-                    type="text"
-                    placeholder="000.000.000-00"
-                    value={form.field1}
-                    onChange={(e) => setForm({ ...form, field1: e.target.value })}
-                    className="input-field w-full"
-                  />
+                  <input type="text" placeholder="000.000.000-00" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Número do Processo</label>
-                  <input
-                    type="text"
-                    placeholder="0000000-00.0000.0.00.0000"
-                    value={form.field2}
-                    onChange={(e) => setForm({ ...form, field2: e.target.value })}
-                    className="input-field w-full"
-                  />
+                  <input type="text" placeholder="0000000-00.0000.0.00.0000" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full" />
                 </div>
               </>
             )}
-
             {activeTab === 'admin' && (
               <>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">E-mail</label>
-                  <input
-                    type="email"
-                    placeholder="admin@exemplo.com"
-                    value={form.field1}
-                    onChange={(e) => setForm({ ...form, field1: e.target.value })}
-                    className="input-field w-full"
-                  />
+                  <input type="email" placeholder="admin@exemplo.com" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Senha</label>
                   <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="Sua senha"
-                      value={form.field2}
-                      onChange={(e) => setForm({ ...form, field2: e.target.value })}
-                      className="input-field w-full pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
+                    <input type={showPassword ? 'text' : 'password'} placeholder="Sua senha" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full pr-10" />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
               </>
             )}
-
             <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
               {loading ? (
                 <span className="flex items-center gap-2">
