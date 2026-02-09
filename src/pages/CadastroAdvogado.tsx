@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 import { Link } from 'react-router-dom';
 import { Check, ChevronRight, ChevronLeft, Search, Shield, Eye, EyeOff, Mail, AlertCircle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -113,20 +114,20 @@ export default function CadastroAdvogado() {
     setErrors({});
 
     try {
-      // In production, this calls POST /validate-oab
-      // Mock response for frontend development
-      await new Promise(r => setTimeout(r, 1500));
+      const { data, error } = await supabase.functions.invoke('validate-oab', {
+        body: { oab: form.oab, uf: form.uf },
+      });
 
-      // Simulating API response
-      const mockResponse = {
-        nome: 'CARLOS EDUARDO MENDES DA SILVA',
-        status: 'ativo' as const,
-      };
+      if (error) {
+        console.error('Edge function error:', error);
+        setOabStatus('nao_encontrado');
+        return;
+      }
 
-      if (mockResponse.status === 'ativo') {
+      if (data.status === 'ativo') {
         setOabStatus('ativo');
-        setForm(prev => ({ ...prev, nomeCompleto: mockResponse.nome }));
-      } else if (mockResponse.status === 'inativo') {
+        setForm(prev => ({ ...prev, nomeCompleto: data.nome }));
+      } else if (data.status === 'inativo') {
         setOabStatus('inativo');
       } else {
         setOabStatus('nao_encontrado');
