@@ -1,105 +1,117 @@
 
 
-# Plano: Corrigir vinculacao automatica de cliente ao processo
+# Integrar WhatsApp via Evolution API na pagina de Atendimento
 
-## Problema Identificado
+## Visao Geral
 
-O fluxo atual depende do `localStorage` para guardar o token do convite durante o cadastro. Isso falha em varios cenarios:
-- O cliente confirma o e-mail em outro navegador ou dispositivo
-- O localStorage e limpo antes do login
-- O cliente ja se cadastrou antes da correcao ser implementada
+A pagina de Atendimento sera transformada em uma central de WhatsApp completa, conectando-se a uma instancia da **Evolution API** (hospedada por voce externamente). O fluxo sera: configurar a URL da API, escanear o QR Code, e entao enviar/receber mensagens diretamente pelo sistema.
 
-**Dados atuais no banco:** Elizabeth tem 3 contas criadas, mas nenhuma esta vinculada ao registro de cliente (campo `auth_user_id` continua vazio). Os convites permanecem com status "pendente".
+## Pre-requisitos
 
-## Solucao Proposta
+Voce precisara ter uma instancia da **Evolution API** rodando em um servidor proprio (VPS, Docker, etc). A Evolution API e gratuita e open-source: [github.com/EvolutionAPI/evolution-api](https://github.com/EvolutionAPI/evolution-api).
 
-Substituir a dependencia do localStorage por um mecanismo robusto no backend: quando um cliente faz login, o sistema busca automaticamente convites pendentes pelo CPF (documento) e os aceita.
+Apos instalar, voce tera:
+- Uma **URL base** (ex: `https://sua-evolution.com`)
+- Uma **API Key** para autenticacao
 
-## Etapas
+Esses dados serao armazenados de forma segura no backend do Lovable Cloud.
 
-### 1. Corrigir dados existentes (Migration SQL)
+## Etapas da Implementacao
 
-Vincular manualmente a conta da Elizabeth ao registro de cliente e ativar o convite, para resolver o problema imediato.
+### 1. Armazenar credenciais da Evolution API
+- Solicitar ao usuario a **URL** e **API Key** da Evolution API
+- Armazena-las como secrets seguros no backend
 
-### 2. Nova Edge Function: `auto-accept-invites`
+### 2. Criar edge functions de integracao
+- **`evolution-whatsapp`**: Edge function que faz proxy das chamadas para a Evolution API:
+  - `POST /connect` - Cria instancia e retorna QR Code
+  - `GET /status` - Verifica status da conexao
+  - `GET /qrcode` - Busca QR Code atualizado
+  - `POST /send` - Envia mensagem de texto
+  - `GET /messages` - Busca historico de mensagens
+  - `POST /disconnect` - Desconecta a instancia
 
-Criar uma funcao backend que:
-- Recebe o usuario autenticado (via header Authorization)
-- Extrai o CPF do `user_metadata`
-- Busca na tabela `clientes` registros com o mesmo `documento` (CPF) que ainda nao tem `auth_user_id`
-- Vincula o `auth_user_id` ao cliente
-- Atualiza todos os convites pendentes desse cliente para status "ativo"
+### 3. Tabelas no banco de dados
+- **`whatsapp_instancias`**: Armazena dados da instancia conectada por advogado (user_id, instance_name, status, phone_number)
+- **`whatsapp_mensagens`**: Historico de mensagens (instancia_id, contato, direcao, conteudo, timestamp)
+- **`whatsapp_contatos`**: Contatos do WhatsApp (nome, numero, foto)
+- RLS para garantir que cada advogado ve apenas suas proprias conversas
 
-Isso elimina completamente a dependencia do localStorage.
+### 4. Webhook para receber mensagens
+- **`evolution-webhook`**: Edge function que recebe webhooks da Evolution API quando chegam novas mensagens
+- Salva a mensagem na tabela `whatsapp_mensagens`
+- Cria notificacao na tabela `notificacoes` para o advogado
+- Realtime habilitado nas tabelas para atualizacao instantanea
 
-### 3. Atualizar `ClienteDashboard.tsx`
+### 5. Interface da pagina de Atendimento
+A pagina tera 3 estados:
 
-- Manter o mecanismo de localStorage como fallback
-- Adicionar chamada a `auto-accept-invites` sempre que o dashboard carrega para um cliente
-- Isso garante que mesmo sem token no localStorage, os convites sao aceitos automaticamente pelo CPF
+**Estado 1 - Nao configurado**: Botao para ir em Configuracoes e inserir URL/API Key da Evolution API
 
-### 4. Atualizar `AceitarConvite.tsx`
+**Estado 2 - Configurado, nao conectado**: Exibe QR Code para escanear com WhatsApp. Atualiza automaticamente a cada 30s. Mostra instrucoes passo a passo.
 
-- Manter o localStorage como fallback
-- Apos login na pagina de convite (quando o cliente ja tem conta), chamar a edge function com o token especifico para aceite imediato
+**Estado 3 - Conectado**: Layout estilo chat com:
+- **Painel esquerdo**: Lista de conversas com busca, ordenadas por ultima mensagem
+- **Painel direito**: Chat aberto com historico de mensagens, campo de envio de texto
+- Indicador de status da conexao (online/offline)
+- Botao para desconectar
 
-## Fluxo Corrigido
+### 6. Pagina de Configuracoes
+- Nova secao "WhatsApp / Evolution API" com campos para URL e API Key
+- Botao para testar conexao
+- Status da instancia atual
 
-```text
-Cliente se cadastra via /convite/:token
-         |
-         v
-Confirma e-mail (qualquer navegador/dispositivo)
-         |
-         v
-Faz login no sistema
-         |
-         v
-ClienteDashboard carrega
-         |
-         v
-Chama auto-accept-invites (backend)
-         |
-    +----+----+
-    |         |
-  Busca por  Busca por
-  localStorage  CPF no banco
-    |         |
-    +----+----+
-         |
-         v
-Vincula auth_user_id ao cliente
-Ativa todos os convites pendentes
-         |
-         v
-Processos aparecem no dashboard
-```
+---
 
 ## Detalhes Tecnicos
 
-### Edge Function `auto-accept-invites`
-```typescript
-// Recebe Authorization header automaticamente
-// Usa service_role para atualizar registros
-// 1. Extrai CPF do user_metadata
-// 2. Busca clientes com mesmo documento sem auth_user_id
-// 3. Atualiza auth_user_id e status do cliente
-// 4. Atualiza cliente_processos para status 'ativo'
+### Edge Function: `evolution-whatsapp`
+```
+Endpoints proxied:
+- POST /api/v1/instance/create
+- GET  /api/v1/instance/connectionState/{instance}
+- GET  /api/v1/instance/fetchInstances
+- POST /api/v1/message/sendText/{instance}
+- POST /api/v1/chat/findMessages/{instance}
 ```
 
-### Migration para dados existentes
-```sql
--- Vincular Elizabeth (auth user) ao registro de cliente
-UPDATE clientes SET auth_user_id = '<user_id>', status = 'ativo'
-WHERE id = '804c5f0a-...';
+### Tabelas (migracao SQL)
+```text
+whatsapp_instancias
++------------------+-------------------+
+| user_id (UUID)   | FK auth.users     |
+| instance_name    | TEXT              |
+| instance_id      | TEXT              |
+| status           | TEXT              |
+| phone_number     | TEXT              |
+| created_at       | TIMESTAMPTZ       |
++------------------+-------------------+
 
--- Ativar convite
-UPDATE cliente_processos SET status = 'ativo', data_aceite = now()
-WHERE cliente_id = '804c5f0a-...';
+whatsapp_mensagens
++------------------+-------------------+
+| instancia_id     | FK instancias     |
+| remote_jid       | TEXT (contato)    |
+| direcao          | TEXT (in/out)     |
+| conteudo         | TEXT              |
+| tipo             | TEXT              |
+| timestamp        | TIMESTAMPTZ       |
+| message_id       | TEXT              |
++------------------+-------------------+
 ```
 
-### Arquivos a criar/modificar
-- `supabase/functions/auto-accept-invites/index.ts` - Nova edge function
-- `src/pages/dashboard/ClienteDashboard.tsx` - Adicionar chamada a nova funcao
-- Migration SQL para corrigir dados existentes
+### Realtime
+Habilitado em `whatsapp_mensagens` para atualizacao em tempo real do chat.
+
+### Webhook
+A Evolution API sera configurada para enviar eventos para:
+`https://<project-id>.supabase.co/functions/v1/evolution-webhook`
+
+### Arquivos que serao criados/editados
+- `supabase/functions/evolution-whatsapp/index.ts` (novo)
+- `supabase/functions/evolution-webhook/index.ts` (novo)
+- `src/pages/atendimento/Atendimento.tsx` (reescrito)
+- `src/hooks/useWhatsApp.ts` (novo)
+- `src/pages/configuracoes/Configuracoes.tsx` (editado - secao Evolution API)
+- Migracao SQL para novas tabelas
+- `supabase/config.toml` atualizado com as novas functions
 
