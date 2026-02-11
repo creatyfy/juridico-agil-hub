@@ -103,10 +103,11 @@ serve(async (req) => {
         }
 
         // Get results
-        const resultsRes = await fetch(`${JUDIT_REQUESTS_URL}/requests/${requestId}/responses`, {
+        const resultsRes = await fetch(`${JUDIT_REQUESTS_URL}/responses?request_id=${requestId}`, {
           headers: { 'api-key': JUDIT_API_KEY },
         });
-        const resultsData = await resultsRes.json();
+        const resultsText = await resultsRes.text();
+        const resultsData = JSON.parse(resultsText);
 
         // Extract movements from response
         const lawsuitData = Array.isArray(resultsData) ? resultsData[0] : resultsData;

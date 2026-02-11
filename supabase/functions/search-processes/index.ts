@@ -48,7 +48,11 @@ serve(async (req) => {
         }),
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try { data = JSON.parse(responseText); } catch { 
+        throw new Error(`Judit API error [${response.status}]: ${responseText}`);
+      }
       if (!response.ok) {
         throw new Error(`Judit API error [${response.status}]: ${JSON.stringify(data)}`);
       }
@@ -59,12 +63,15 @@ serve(async (req) => {
     }
 
     if (action === 'status') {
-      // Check request status
       const response = await fetch(`${JUDIT_REQUESTS_URL}/requests/${request_id}`, {
         headers: { 'api-key': JUDIT_API_KEY },
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        throw new Error(`Judit API error [${response.status}]: ${text}`);
+      }
       if (!response.ok) {
         throw new Error(`Judit API error [${response.status}]: ${JSON.stringify(data)}`);
       }
@@ -75,13 +82,17 @@ serve(async (req) => {
     }
 
     if (action === 'results') {
-      // Get results with pagination
-      const url = new URL(`${JUDIT_REQUESTS_URL}/requests/${request_id}/responses`);
-      const response = await fetch(url.toString(), {
+      // Judit docs: GET /responses?request_id=X
+      const url = `${JUDIT_REQUESTS_URL}/responses?request_id=${request_id}`;
+      const response = await fetch(url, {
         headers: { 'api-key': JUDIT_API_KEY },
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        throw new Error(`Judit API error [${response.status}]: ${text}`);
+      }
       if (!response.ok) {
         throw new Error(`Judit API error [${response.status}]: ${JSON.stringify(data)}`);
       }
