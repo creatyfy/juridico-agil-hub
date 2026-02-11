@@ -114,7 +114,7 @@ export default function ProcessosList() {
 
       {/* List */}
       {!loading && filtered.length > 0 && (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtered.map(proc => {
             const partes = Array.isArray(proc.partes) ? proc.partes : [];
             const autor = partes.find((p: any) => p.side === 'Active' && p.person_type !== 'Advogado');
@@ -127,72 +127,10 @@ export default function ProcessosList() {
 
             return (
               <Link key={proc.id} to={`/processos/${proc.id}`} className="block group">
-                <div className="bg-card rounded-xl border p-5 transition-all duration-200 hover:shadow-[0_8px_30px_-4px_hsl(212_88%_50%/0.18)] hover:border-accent/40">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1 space-y-2">
-                      {/* Número CNJ */}
-                      <div className="flex items-center gap-2">
-                        <Scale className="h-4 w-4 text-accent shrink-0" />
-                        <p className="font-mono text-sm font-bold text-foreground tracking-wide">{proc.numero_cnj}</p>
-                      </div>
-
-                      {/* Classe e Tribunal */}
-                      <p className="text-sm font-medium text-muted-foreground">
-                        {proc.classe}{proc.tribunal ? ` • ${proc.tribunal}` : ''}
-                      </p>
-
-                      {/* Partes */}
-                      {(autor || reu) && (
-                        <div className="flex items-start gap-2 text-xs text-muted-foreground/80">
-                          <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-accent/60" />
-                          <div className="space-y-0.5">
-                            {autor && <p><span className="font-medium text-foreground/70">Autor:</span> {autor.name}</p>}
-                            {reu && <p><span className="font-medium text-foreground/70">Réu:</span> {reu.name}</p>}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Info extra row */}
-                      <div className="flex flex-wrap items-center gap-3 pt-1">
-                        {proc.assunto && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-accent/8 text-accent px-2 py-0.5 rounded-md font-medium">
-                            {proc.assunto}
-                          </span>
-                        )}
-                        {proc.vara && (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
-                            <MapPin className="h-3 w-3" />
-                            {proc.vara}
-                          </span>
-                        )}
-                        {dataFormatada && (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
-                            <Calendar className="h-3 w-3" />
-                            {dataFormatada}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Client badge */}
-                      {cliente && (
-                        <div className="pt-1">
-                          <span
-                            onClick={(e) => { e.preventDefault(); setSearch(search === cliente.name ? '' : cliente.name); }}
-                            className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border cursor-pointer transition-all duration-150 ${
-                              search === cliente.name
-                                ? 'bg-accent text-accent-foreground border-accent'
-                                : 'bg-accent/5 text-accent border-accent/20 hover:bg-accent/10 hover:border-accent/40'
-                            }`}
-                          >
-                            <Users className="h-3 w-3" />
-                            {cliente.name}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Right side badges */}
-                    <div className="flex flex-col items-end gap-2 shrink-0">
+                <div className="bg-card rounded-xl border p-5 h-full transition-all duration-200 hover:shadow-[0_8px_30px_-4px_hsl(212_88%_50%/0.18)] hover:border-accent/40">
+                  <div className="flex flex-col gap-3 h-full">
+                    {/* Top row: status + fonte */}
+                    <div className="flex items-center justify-between">
                       <StatusBadge variant={proc.status === 'ativo' ? 'success' : 'neutral'}>
                         {proc.status || 'ativo'}
                       </StatusBadge>
@@ -200,6 +138,66 @@ export default function ProcessosList() {
                         {proc.fonte === 'judit' ? 'Judit' : 'Manual'}
                       </span>
                     </div>
+
+                    {/* Número CNJ */}
+                    <div className="flex items-center gap-2">
+                      <Scale className="h-4 w-4 text-accent shrink-0" />
+                      <p className="font-mono text-sm font-bold text-foreground tracking-wide">{proc.numero_cnj}</p>
+                    </div>
+
+                    {/* Classe e Tribunal */}
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {proc.classe}{proc.tribunal ? ` • ${proc.tribunal}` : ''}
+                    </p>
+
+                    {/* Partes */}
+                    {(autor || reu) && (
+                      <div className="flex items-start gap-2 text-xs text-muted-foreground/80">
+                        <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-accent/60" />
+                        <div className="space-y-0.5">
+                          {autor && <p><span className="font-medium text-foreground/70">Autor:</span> {autor.name}</p>}
+                          {reu && <p><span className="font-medium text-foreground/70">Réu:</span> {reu.name}</p>}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Info extra row */}
+                    <div className="flex flex-wrap items-center gap-2 mt-auto pt-2">
+                      {proc.assunto && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-accent/8 text-accent px-2 py-0.5 rounded-md font-medium">
+                          {proc.assunto}
+                        </span>
+                      )}
+                      {proc.vara && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                          <MapPin className="h-3 w-3" />
+                          {proc.vara}
+                        </span>
+                      )}
+                      {dataFormatada && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                          <Calendar className="h-3 w-3" />
+                          {dataFormatada}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Client badge */}
+                    {cliente && (
+                      <div>
+                        <span
+                          onClick={(e) => { e.preventDefault(); setSearch(search === cliente.name ? '' : cliente.name); }}
+                          className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border cursor-pointer transition-all duration-150 ${
+                            search === cliente.name
+                              ? 'bg-accent text-accent-foreground border-accent'
+                              : 'bg-accent/5 text-accent border-accent/20 hover:bg-accent/10 hover:border-accent/40'
+                          }`}
+                        >
+                          <Users className="h-3 w-3" />
+                          {cliente.name}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Link>
