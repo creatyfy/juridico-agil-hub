@@ -1,7 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import AppSidebar from './AppSidebar';
 import { useAuth } from '@/contexts/AuthContext';
-import { Bell } from 'lucide-react';
+import NotificationCenter from '@/components/NotificationCenter';
 
 export default function AppLayout() {
   const { user } = useAuth();
@@ -18,10 +18,7 @@ export default function AppLayout() {
             </h2>
           </div>
           <div className="flex items-center gap-4">
-            <button className="relative p-2 rounded-md hover:bg-secondary transition-colors">
-              <Bell className="h-5 w-5 text-muted-foreground" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
-            </button>
+            <NotificationCenter />
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
                 <span className="text-xs font-semibold text-primary-foreground">
