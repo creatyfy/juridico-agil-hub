@@ -44,8 +44,60 @@ export type Database = {
         }
         Relationships: []
       }
+      cliente_processos: {
+        Row: {
+          advogado_user_id: string
+          cliente_id: string
+          created_at: string
+          data_aceite: string | null
+          data_convite: string
+          id: string
+          processo_id: string
+          status: string
+          token: string
+        }
+        Insert: {
+          advogado_user_id: string
+          cliente_id: string
+          created_at?: string
+          data_aceite?: string | null
+          data_convite?: string
+          id?: string
+          processo_id: string
+          status?: string
+          token?: string
+        }
+        Update: {
+          advogado_user_id?: string
+          cliente_id?: string
+          created_at?: string
+          data_aceite?: string | null
+          data_convite?: string
+          id?: string
+          processo_id?: string
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_processos_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_processos_processo_id_fkey"
+            columns: ["processo_id"]
+            isOneToOne: false
+            referencedRelation: "processos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clientes: {
         Row: {
+          auth_user_id: string | null
           created_at: string
           documento: string | null
           email: string | null
@@ -53,6 +105,7 @@ export type Database = {
           id: string
           nome: string
           observacoes: string | null
+          status: string | null
           telefone: string | null
           tipo_documento: string | null
           tipo_pessoa: string | null
@@ -60,6 +113,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auth_user_id?: string | null
           created_at?: string
           documento?: string | null
           email?: string | null
@@ -67,6 +121,7 @@ export type Database = {
           id?: string
           nome: string
           observacoes?: string | null
+          status?: string | null
           telefone?: string | null
           tipo_documento?: string | null
           tipo_pessoa?: string | null
@@ -74,6 +129,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auth_user_id?: string | null
           created_at?: string
           documento?: string | null
           email?: string | null
@@ -81,6 +137,7 @@ export type Database = {
           id?: string
           nome?: string
           observacoes?: string | null
+          status?: string | null
           telefone?: string | null
           tipo_documento?: string | null
           tipo_pessoa?: string | null
