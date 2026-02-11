@@ -88,9 +88,10 @@ export function useMovimentacoes(processoId: string | undefined) {
   return { movimentacoes, loading, refetch: fetchMovimentacoes };
 }
 
-export async function searchJuditProcesses(oab: string) {
+export async function searchJuditProcesses(oab: string, uf: string) {
+  const searchKey = `${uf}${oab}`;
   const { data, error } = await supabase.functions.invoke('search-processes', {
-    body: { action: 'create', search_type: 'oab', search_key: oab },
+    body: { action: 'create', search_type: 'oab', search_key: searchKey },
   });
   if (error) throw error;
   return data;

@@ -38,15 +38,15 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
   const pollRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleSearchByOab = useCallback(async () => {
-    if (!user?.oab) {
-      toast.error('OAB não encontrada no seu perfil');
+    if (!user?.oab || !user?.uf) {
+      toast.error('OAB ou UF não encontrada no seu perfil');
       return;
     }
 
     setStep('searching');
     setResults([]);
     try {
-      const data = await searchJuditProcesses(user.oab);
+      const data = await searchJuditProcesses(user.oab, user.uf);
       const requestId = data.request_id;
 
       if (!requestId) {
