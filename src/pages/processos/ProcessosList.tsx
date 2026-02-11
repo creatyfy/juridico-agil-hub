@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useClientes } from '@/hooks/useClientes';
 import { Search, Filter, FileText, Plus, RefreshCw, Download, Scale, MapPin, Users, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
@@ -15,6 +16,7 @@ export default function ProcessosList() {
   const [showImport, setShowImport] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const { processos, loading, refetch } = useProcessos();
+  const { clientes } = useClientes();
 
   const filtered = processos.filter(p => {
     const partes = Array.isArray(p.partes) ? p.partes : [];
@@ -183,21 +185,28 @@ export default function ProcessosList() {
                     </div>
 
                     {/* Client badge */}
-                    {cliente && (
-                      <div>
-                        <span
-                          onClick={(e) => { e.preventDefault(); setSearch(search === cliente.name ? '' : cliente.name); }}
-                          className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border cursor-pointer transition-all duration-150 ${
-                            search === cliente.name
-                              ? 'bg-accent text-accent-foreground border-accent'
-                              : 'bg-accent/5 text-accent border-accent/20 hover:bg-accent/10 hover:border-accent/40'
-                          }`}
-                        >
-                          <Users className="h-3 w-3" />
-                          {cliente.name}
-                        </span>
-                      </div>
-                    )}
+                    {cliente && (() => {
+                      const clienteDb = clientes.find(c => c.documento && cliente.main_document && c.documento === cliente.main_document);
+                      return clienteDb ? (
+                        <div>
+                          <Link
+                            to={`/clientes/${clienteDb.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border cursor-pointer transition-all duration-150 bg-accent/5 text-accent border-accent/20 hover:bg-accent/10 hover:border-accent/40"
+                          >
+                            <Users className="h-3 w-3" />
+                            {cliente.name}
+                          </Link>
+                        </div>
+                      ) : (
+                        <div>
+                          <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border bg-accent/5 text-accent border-accent/20">
+                            <Users className="h-3 w-3" />
+                            {cliente.name}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </Link>

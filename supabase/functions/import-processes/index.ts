@@ -91,6 +91,26 @@ serve(async (req) => {
         }
       }
 
+      // Extract and upsert clientes from Active side parties
+      if (proc.partes && Array.isArray(proc.partes)) {
+        for (const parte of proc.partes) {
+          if (parte.side === 'Active' && parte.person_type !== 'Advogado' && parte.name) {
+            const doc = parte.main_document || null;
+            const tipoDoc = doc && doc.length > 14 ? 'CNPJ' : 'CPF';
+            const tipoPessoa = doc && doc.length > 14 ? 'juridica' : 'fisica';
+            await supabase
+              .from('clientes')
+              .upsert({
+                user_id: user.id,
+                nome: parte.name,
+                documento: doc,
+                tipo_documento: tipoDoc,
+                tipo_pessoa: tipoPessoa,
+              }, { onConflict: 'user_id,documento' });
+          }
+        }
+      }
+
       results.push({ numero_cnj: proc.numero_cnj, id: processo.id, success: true });
     }
 
