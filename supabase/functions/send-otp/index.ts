@@ -90,7 +90,7 @@ serve(async (req: Request) => {
       const errData = await emailResponse.text();
       console.error('Resend error:', errData);
       return new Response(
-        JSON.stringify({ error: 'Erro ao enviar e-mail' }),
+        JSON.stringify({ error: 'Erro ao enviar e-mail. Verifique se o domínio do remetente está verificado no Resend.', details: errData }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

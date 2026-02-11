@@ -208,7 +208,11 @@ export default function CadastroAdvogado() {
       }
 
       // Send OTP code via our edge function
-      await sendOtpEmail(form.email);
+      try {
+        await sendOtpEmail(form.email);
+      } catch (otpErr) {
+        console.error('OTP send failed, user can retry on step 3:', otpErr);
+      }
       setCurrentStep(3);
     } catch {
       setSubmitError('Erro inesperado. Tente novamente.');
