@@ -70,8 +70,10 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
         if (requestStatus === 'completed' || requestStatus === 'done') {
           const resultsData = await getJuditResults(requestId);
-          const processList = Array.isArray(resultsData) ? resultsData : resultsData?.data || resultsData?.lawsuits || [resultsData];
-          setResults(processList.filter(Boolean));
+          // Judit returns { page_data: [{ response_data: {...} }] }
+          const pageData = resultsData?.page_data || resultsData?.data || [];
+          const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
+          setResults(processList);
           setStep('results');
           toast.success(`${processList.length} processo(s) encontrado(s)`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -126,8 +128,9 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
         if (requestStatus === 'completed' || requestStatus === 'done') {
           const resultsData = await getJuditResults(requestId);
-          const processList = Array.isArray(resultsData) ? resultsData : resultsData?.data || [resultsData];
-          setResults(processList.filter(Boolean));
+          const pageData = resultsData?.page_data || resultsData?.data || [];
+          const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
+          setResults(processList);
           setStep('results');
           toast.success(`Processo encontrado`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -156,17 +159,17 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       const toImport = Array.from(selected).map(idx => {
         const p = results[idx];
         return {
-          numero_cnj: p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '',
-          tribunal: p.court_name || p.court || p.tribunal || '',
-          vara: p.vara || p.court_division || '',
-          classe: p.class_name || p.classe || '',
-          assunto: p.subject || p.assunto || '',
+          numero_cnj: p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '',
+          tribunal: p.justice_description || p.court_name || p.court || p.tribunal || '',
+          vara: p.courts?.[0]?.name || p.vara || p.court_division || '',
+          classe: p.classifications?.[0]?.name || p.class_name || p.classe || '',
+          assunto: p.area || p.subject || p.assunto || '',
           partes: p.parties || p.partes || [],
           status: 'ativo',
           data_distribuicao: p.distribution_date || p.data_distribuicao || null,
-          judit_process_id: p.id?.toString() || null,
+          judit_process_id: p.response_id?.toString() || p.id?.toString() || null,
           fonte: importMode === 'manual' ? 'manual' : 'judit',
-          movimentacoes: p.steps || p.movimentacoes || [],
+          movimentacoes: p.last_step ? [p.last_step] : (p.steps || p.movimentacoes || []),
         };
       });
 
@@ -196,9 +199,10 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
     }
   };
 
-  const getCnj = (p: JuditProcesso) => p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || 'N/A';
-  const getCourt = (p: JuditProcesso) => p.court_name || p.court || p.tribunal || '';
-  const getClass = (p: JuditProcesso) => p.class_name || p.classe || '';
+  const getCnj = (p: JuditProcesso) => p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || 'N/A';
+  const getCourt = (p: JuditProcesso) => p.courts?.[0]?.name || p.justice_description || p.court_name || p.court || p.tribunal || '';
+  const getClass = (p: JuditProcesso) => p.classifications?.[0]?.name || p.class_name || p.classe || '';
+  const getArea = (p: JuditProcesso) => p.area || p.subject || p.assunto || '';
 
   return (
     <div className="space-y-6">
@@ -299,9 +303,9 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
                   <p className="text-sm text-muted-foreground mt-0.5">
                     {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
                   </p>
-                  {(proc.subject || proc.assunto) && (
+                  {(getArea(proc)) && (
                     <p className="text-xs text-muted-foreground/70 mt-0.5">
-                      {proc.subject || proc.assunto}
+                      {getArea(proc)}
                     </p>
                   )}
                 </div>
