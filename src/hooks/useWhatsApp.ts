@@ -32,10 +32,13 @@ function callEvolution(action: string, params?: Record<string, string>, body?: a
   }
 
   return supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!session?.access_token) {
+      return Promise.reject(new Error('No active session'));
+    }
     return fetch(url.toString(), {
       method: body ? 'POST' : 'GET',
       headers: {
-        'Authorization': `Bearer ${session?.access_token}`,
+        'Authorization': `Bearer ${session.access_token}`,
         'Content-Type': 'application/json',
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
       },
