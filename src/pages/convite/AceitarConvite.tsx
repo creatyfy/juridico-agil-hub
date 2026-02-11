@@ -76,7 +76,7 @@ export default function AceitarConvite() {
             cpf: data?.cliente.documento,
             role: 'cliente',
           },
-          emailRedirectTo: `${window.location.origin}/convite/${token}`,
+          emailRedirectTo: `${window.location.origin}/login`,
         },
       });
       if (signUpError) throw signUpError;
