@@ -31,7 +31,6 @@ serve(async (req: Request) => {
       const cleanCpf = cpf.replace(/\D/g, '');
       const cleanOab = oab.replace(/\D/g, '');
 
-      // Upsert credentials
       const { error } = await supabaseAdmin
         .from('advogado_credentials')
         .upsert(
@@ -53,84 +52,39 @@ serve(async (req: Request) => {
       );
     }
 
-    // Action: login - authenticate with OAB + CPF
-    if (action === 'login') {
-      if (!oab || !uf || !cpf) {
+    // Action: lookup - find email by OAB+UF (used for OAB+Password login)
+    if (action === 'lookup') {
+      if (!oab || !uf) {
         return new Response(
-          JSON.stringify({ error: 'Campos obrigatórios: oab, uf, cpf' }),
+          JSON.stringify({ error: 'Campos obrigatórios: oab, uf' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      const cleanCpf = cpf.replace(/\D/g, '');
       const cleanOab = oab.replace(/\D/g, '');
 
-      // Look up credentials
       const { data: cred, error: lookupError } = await supabaseAdmin
         .from('advogado_credentials')
-        .select('email, user_id')
+        .select('email')
         .eq('oab', cleanOab)
         .eq('uf', uf)
-        .eq('cpf', cleanCpf)
         .maybeSingle();
 
       if (lookupError || !cred) {
         return new Response(
-          JSON.stringify({ error: 'OAB ou CPF não encontrados. Verifique os dados ou cadastre-se.' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'OAB não encontrada. Verifique os dados ou cadastre-se.' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-
-      // Check if user's email is confirmed
-      const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(cred.user_id);
-      
-      if (userError || !userData?.user) {
-        return new Response(
-          JSON.stringify({ error: 'Usuário não encontrado no sistema.' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      if (!userData.user.email_confirmed_at) {
-        return new Response(
-          JSON.stringify({ error: 'E-mail ainda não confirmado. Verifique sua caixa de entrada.' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Generate a magic link for passwordless sign-in
-      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'magiclink',
-        email: cred.email,
-      });
-
-      if (linkError || !linkData) {
-        console.error('Error generating link:', linkError);
-        return new Response(
-          JSON.stringify({ error: 'Erro ao gerar sessão. Tente novamente.' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Extract token hash from the action link
-      const actionLink = linkData.properties?.action_link || '';
-      const url = new URL(actionLink);
-      const tokenHash = url.searchParams.get('token_hash') || url.hash?.replace('#', '') || '';
-      
-      // Also get the token from the properties
-      const hashedToken = linkData.properties?.hashed_token || '';
 
       return new Response(
-        JSON.stringify({ 
-          email: cred.email,
-          token_hash: tokenHash || hashedToken,
-        }),
+        JSON.stringify({ email: cred.email }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     return new Response(
-      JSON.stringify({ error: 'Ação inválida. Use "login" ou "register".' }),
+      JSON.stringify({ error: 'Ação inválida. Use "lookup" ou "register".' }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
