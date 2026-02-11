@@ -61,11 +61,16 @@ export function useWhatsApp() {
       const res = await callEvolution('status');
       if (res.status === 'not_found') {
         setStatus('disconnected');
+      } else if (res.status === 'connected') {
+        setStatus('connected');
+      } else if (res.status === 'connecting') {
+        setStatus('connecting');
       } else {
-        setStatus(res.status as ConnectionStatus);
+        // Only set disconnected if we're not actively trying to connect
+        setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
       }
     } catch {
-      setStatus('disconnected');
+      setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
     }
   }, []);
 
