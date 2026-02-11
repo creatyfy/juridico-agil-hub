@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Link } from 'react-router-dom';
-import { Check, ChevronRight, ChevronLeft, Search, Shield, Eye, EyeOff, Mail, AlertCircle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Check, ChevronRight, ChevronLeft, Search, Shield, Eye, EyeOff, Mail, AlertCircle, Loader2, CheckCircle2, XCircle, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -160,6 +160,21 @@ export default function CadastroAdvogado() {
   };
 
   const [submitError, setSubmitError] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [otpSuccess, setOtpSuccess] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  const sendOtpEmail = async (email: string) => {
+    const { error } = await supabase.functions.invoke('send-otp', {
+      body: { email },
+    });
+    if (error) {
+      console.error('Send OTP error:', error);
+      throw new Error('Erro ao enviar código');
+    }
+  };
 
   const handleSubmit = async () => {
     if (!validateStep2()) {
@@ -192,6 +207,8 @@ export default function CadastroAdvogado() {
         return;
       }
 
+      // Send OTP code via our edge function
+      await sendOtpEmail(form.email);
       setCurrentStep(3);
     } catch {
       setSubmitError('Erro inesperado. Tente novamente.');
@@ -200,16 +217,43 @@ export default function CadastroAdvogado() {
     }
   };
 
+  const handleVerifyOtp = async () => {
+    if (otpCode.length !== 6) {
+      setOtpError('Digite o código de 6 dígitos');
+      return;
+    }
+    setOtpVerifying(true);
+    setOtpError('');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('verify-otp', {
+        body: { email: form.email, code: otpCode },
+      });
+
+      if (error || !data?.success) {
+        setOtpError(data?.error || 'Código inválido ou expirado');
+        return;
+      }
+
+      setOtpSuccess(true);
+    } catch {
+      setOtpError('Erro ao verificar código');
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
   const handleResendEmail = async () => {
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: form.email,
-      options: {
-        emailRedirectTo: window.location.origin + '/login',
-      },
-    });
-    if (!error) {
-      alert('E-mail reenviado! Verifique sua caixa de entrada.');
+    setResending(true);
+    try {
+      await sendOtpEmail(form.email);
+      setOtpError('');
+      setOtpCode('');
+      alert('Novo código enviado! Verifique sua caixa de entrada.');
+    } catch {
+      setOtpError('Erro ao reenviar código');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -594,45 +638,99 @@ export default function CadastroAdvogado() {
             </div>
           )}
 
-          {/* Step 3: Email Verification */}
+          {/* Step 3: OTP Verification */}
           {currentStep === 3 && (
             <div className="animate-in fade-in slide-in-from-right-4 duration-300 text-center py-8">
-              <div className="mx-auto w-20 h-20 rounded-full bg-accent/10 flex items-center justify-center mb-6">
-                <Mail className="h-9 w-9 text-accent" />
-              </div>
-
-              <h2 className="text-2xl font-bold mb-2">Verifique seu e-mail</h2>
-              <p className="text-muted-foreground max-w-sm mx-auto leading-relaxed">
-                Enviamos um link de confirmação para{' '}
-                <span className="font-semibold text-foreground">{form.email}</span>.
-                Verifique sua caixa de entrada e spam.
-              </p>
-
-              <div className="mt-8 p-5 rounded-xl bg-secondary/60 border max-w-sm mx-auto">
-                <div className="flex items-start gap-3 text-left">
-                  <AlertCircle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold">Atenção</p>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      Seu cadastro só será ativado após a confirmação do e-mail. Você não poderá fazer login antes disso.
-                    </p>
+              {!otpSuccess ? (
+                <>
+                  <div className="mx-auto w-20 h-20 rounded-full bg-accent/10 flex items-center justify-center mb-6">
+                    <KeyRound className="h-9 w-9 text-accent" />
                   </div>
-                </div>
-              </div>
 
-              <div className="mt-8 space-y-3">
-                <Link to="/login">
-                  <Button className="btn-accent w-full max-w-sm h-11 font-semibold">
-                    Ir para o Login
-                  </Button>
-                </Link>
-                <p className="text-xs text-muted-foreground">
-                  Não recebeu?{' '}
-                  <button onClick={handleResendEmail} className="text-accent hover:underline font-medium">
-                    Reenviar e-mail
-                  </button>
-                </p>
-              </div>
+                  <h2 className="text-2xl font-bold mb-2">Verifique seu e-mail</h2>
+                  <p className="text-muted-foreground max-w-sm mx-auto leading-relaxed mb-8">
+                    Enviamos um código de 6 dígitos para{' '}
+                    <span className="font-semibold text-foreground">{form.email}</span>.
+                  </p>
+
+                  <div className="max-w-xs mx-auto space-y-4">
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="000000"
+                      value={otpCode}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                        setOtpCode(val);
+                        if (otpError) setOtpError('');
+                      }}
+                      className={cn(
+                        'text-center text-2xl font-bold tracking-[0.5em] h-14',
+                        otpError && 'border-destructive'
+                      )}
+                      maxLength={6}
+                    />
+                    {otpError && (
+                      <p className="text-xs text-destructive">{otpError}</p>
+                    )}
+
+                    <Button
+                      onClick={handleVerifyOtp}
+                      className="btn-accent w-full h-11 font-semibold"
+                      disabled={otpVerifying || otpCode.length !== 6}
+                    >
+                      {otpVerifying ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Verificando...
+                        </span>
+                      ) : (
+                        'Verificar Código'
+                      )}
+                    </Button>
+                  </div>
+
+                  <div className="mt-6 p-4 rounded-xl bg-secondary/60 border max-w-sm mx-auto">
+                    <div className="flex items-start gap-3 text-left">
+                      <AlertCircle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold">Dica</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          Verifique também sua caixa de spam. O código expira em 10 minutos.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground mt-4">
+                    Não recebeu?{' '}
+                    <button
+                      onClick={handleResendEmail}
+                      disabled={resending}
+                      className="text-accent hover:underline font-medium disabled:opacity-50"
+                    >
+                      {resending ? 'Enviando...' : 'Reenviar código'}
+                    </button>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="mx-auto w-20 h-20 rounded-full bg-[hsl(var(--success))]/10 flex items-center justify-center mb-6">
+                    <CheckCircle2 className="h-9 w-9 text-[hsl(var(--success))]" />
+                  </div>
+
+                  <h2 className="text-2xl font-bold mb-2">E-mail Verificado!</h2>
+                  <p className="text-muted-foreground max-w-sm mx-auto leading-relaxed mb-8">
+                    Sua conta foi criada e verificada com sucesso. Você já pode fazer login.
+                  </p>
+
+                  <Link to="/login">
+                    <Button className="btn-accent w-full max-w-sm h-11 font-semibold">
+                      Ir para o Login
+                    </Button>
+                  </Link>
+                </>
+              )}
             </div>
           )}
 
