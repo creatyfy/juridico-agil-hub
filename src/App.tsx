@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import ProcessosList from "./pages/processos/ProcessosList";
 import ProcessoDetail from "./pages/processos/ProcessoDetail";
 import ClientesList from "./pages/clientes/ClientesList";
+import ClienteDetail from "./pages/clientes/ClienteDetail";
 import Atendimento from "./pages/atendimento/Atendimento";
 import Configuracoes from "./pages/configuracoes/Configuracoes";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="/processos" element={<ProcessosList />} />
         <Route path="/processos/:id" element={<ProcessoDetail />} />
         <Route path="/clientes" element={<ClientesList />} />
+        <Route path="/clientes/:id" element={<ClienteDetail />} />
         <Route path="/atendimento" element={<Atendimento />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
 
