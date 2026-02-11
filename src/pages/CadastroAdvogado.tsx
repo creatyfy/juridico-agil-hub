@@ -159,21 +159,57 @@ export default function CadastroAdvogado() {
     setCurrentStep(prev => prev + 1);
   };
 
+  const [submitError, setSubmitError] = useState('');
+
   const handleSubmit = async () => {
     if (!validateStep2()) {
       setCurrentStep(2);
       return;
     }
     setSubmitting(true);
+    setSubmitError('');
 
     try {
-      // In production, POST to /register-advogado
-      await new Promise(r => setTimeout(r, 2000));
+      const { error } = await supabase.auth.signUp({
+        email: form.email,
+        password: form.senha,
+        options: {
+          emailRedirectTo: window.location.origin + '/login',
+          data: {
+            full_name: form.nomeCompleto,
+            oab: form.oab,
+            uf: form.uf,
+            cpf: form.cpf,
+            whatsapp: form.whatsapp,
+            data_nascimento: form.dataNascimento,
+            role: 'advogado',
+          },
+        },
+      });
+
+      if (error) {
+        setSubmitError(error.message);
+        return;
+      }
+
       setCurrentStep(3);
     } catch {
-      // handle error
+      setSubmitError('Erro inesperado. Tente novamente.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleResendEmail = async () => {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: form.email,
+      options: {
+        emailRedirectTo: window.location.origin + '/login',
+      },
+    });
+    if (!error) {
+      alert('E-mail reenviado! Verifique sua caixa de entrada.');
     }
   };
 
@@ -524,6 +560,13 @@ export default function CadastroAdvogado() {
                 </div>
               </div>
 
+              {submitError && (
+                <Alert variant="destructive" className="mt-4">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{submitError}</AlertDescription>
+                </Alert>
+              )}
+
               <div className="flex gap-3 mt-8">
                 <Button
                   variant="outline"
@@ -585,7 +628,7 @@ export default function CadastroAdvogado() {
                 </Link>
                 <p className="text-xs text-muted-foreground">
                   Não recebeu?{' '}
-                  <button className="text-accent hover:underline font-medium">
+                  <button onClick={handleResendEmail} className="text-accent hover:underline font-medium">
                     Reenviar e-mail
                   </button>
                 </p>
