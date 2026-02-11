@@ -69,7 +69,8 @@ export default function ClienteDetail() {
     try {
       const result = await convidarProcesso(id, selectedProcesso);
       if (result.token) {
-        const link = `${window.location.origin}/convite/${result.token}`;
+        const publishedUrl = import.meta.env.VITE_SITE_URL || 'https://juridico-agil-hub.lovable.app';
+        const link = `${publishedUrl}/convite/${result.token}`;
         setInviteLink(link);
         toast.success(result.emailSent ? 'Convite enviado por e-mail!' : 'Convite criado com sucesso!');
         refetchVinculos();
