@@ -80,6 +80,8 @@ export default function AceitarConvite() {
         },
       });
       if (signUpError) throw signUpError;
+      // Store token so we can auto-accept after email confirmation + login
+      if (token) localStorage.setItem('pending_invite_token', token);
       toast.success('Cadastro realizado! Verifique seu e-mail para confirmar.');
     } catch (e: any) {
       toast.error(e.message || 'Erro ao cadastrar');
