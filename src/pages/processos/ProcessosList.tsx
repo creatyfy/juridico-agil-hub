@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, FileText, Plus, RefreshCw, Download } from 'lucide-react';
+import { Search, Filter, FileText, Plus, RefreshCw, Download, Scale, MapPin, Users, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
 import { useProcessos, syncProcessMovements } from '@/hooks/useProcessos';
 import ImportarProcessos from '@/components/ImportarProcessos';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 export default function ProcessosList() {
   const [search, setSearch] = useState('');
@@ -107,32 +109,78 @@ export default function ProcessosList() {
 
       {/* List */}
       {!loading && filtered.length > 0 && (
-        <div className="space-y-2">
-          {filtered.map(proc => (
-            <Link key={proc.id} to={`/processos/${proc.id}`} className="block">
-              <div className="card-elevated p-4 hover:bg-accent/5 transition-colors">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-mono text-sm font-semibold">{proc.numero_cnj}</p>
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                      {proc.classe}{proc.tribunal ? ` • ${proc.tribunal}` : ''}
-                    </p>
-                    {proc.assunto && (
-                      <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{proc.assunto}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <StatusBadge variant={proc.status === 'ativo' ? 'success' : 'neutral'}>
-                      {proc.status || 'ativo'}
-                    </StatusBadge>
-                    <span className="text-xs text-muted-foreground">
-                      {proc.fonte === 'judit' ? 'Judit' : 'Manual'}
-                    </span>
+        <div className="grid gap-3">
+          {filtered.map(proc => {
+            const partes = Array.isArray(proc.partes) ? proc.partes : [];
+            const autor = partes.find((p: any) => p.side === 'Active' && p.person_type !== 'Advogado');
+            const reu = partes.find((p: any) => p.side === 'Passive' && p.person_type !== 'Advogado');
+            const dataFormatada = proc.data_distribuicao
+              ? format(new Date(proc.data_distribuicao), "dd/MM/yyyy", { locale: ptBR })
+              : null;
+
+            return (
+              <Link key={proc.id} to={`/processos/${proc.id}`} className="block group">
+                <div className="bg-card rounded-xl border p-5 transition-all duration-200 hover:shadow-[0_8px_30px_-4px_hsl(212_88%_50%/0.18)] hover:border-accent/40">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      {/* Número CNJ */}
+                      <div className="flex items-center gap-2">
+                        <Scale className="h-4 w-4 text-accent shrink-0" />
+                        <p className="font-mono text-sm font-bold text-foreground tracking-wide">{proc.numero_cnj}</p>
+                      </div>
+
+                      {/* Classe e Tribunal */}
+                      <p className="text-sm font-medium text-muted-foreground">
+                        {proc.classe}{proc.tribunal ? ` • ${proc.tribunal}` : ''}
+                      </p>
+
+                      {/* Partes */}
+                      {(autor || reu) && (
+                        <div className="flex items-start gap-2 text-xs text-muted-foreground/80">
+                          <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-accent/60" />
+                          <div className="space-y-0.5">
+                            {autor && <p><span className="font-medium text-foreground/70">Autor:</span> {autor.name}</p>}
+                            {reu && <p><span className="font-medium text-foreground/70">Réu:</span> {reu.name}</p>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Info extra row */}
+                      <div className="flex flex-wrap items-center gap-3 pt-1">
+                        {proc.assunto && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-accent/8 text-accent px-2 py-0.5 rounded-md font-medium">
+                            {proc.assunto}
+                          </span>
+                        )}
+                        {proc.vara && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                            <MapPin className="h-3 w-3" />
+                            {proc.vara}
+                          </span>
+                        )}
+                        {dataFormatada && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                            <Calendar className="h-3 w-3" />
+                            {dataFormatada}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Right side badges */}
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <StatusBadge variant={proc.status === 'ativo' ? 'success' : 'neutral'}>
+                        {proc.status || 'ativo'}
+                      </StatusBadge>
+                      <span className="text-[11px] text-muted-foreground/60 font-medium uppercase tracking-wider">
+                        {proc.fonte === 'judit' ? 'Judit' : 'Manual'}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
         </div>
       )}
 
