@@ -15,14 +15,6 @@ const UF_OPTIONS = [
   'PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'
 ];
 
-function formatCPF(value: string) {
-  const nums = value.replace(/\D/g, '').slice(0, 11);
-  if (nums.length <= 3) return nums;
-  if (nums.length <= 6) return `${nums.slice(0, 3)}.${nums.slice(3)}`;
-  if (nums.length <= 9) return `${nums.slice(0, 3)}.${nums.slice(3, 6)}.${nums.slice(6)}`;
-  return `${nums.slice(0, 3)}.${nums.slice(3, 6)}.${nums.slice(6, 9)}-${nums.slice(9)}`;
-}
-
 type LoginMode = 'oab' | 'email';
 
 export default function Login() {
@@ -30,14 +22,14 @@ export default function Login() {
 
   // Email login state
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
 
   // OAB login state
   const [oab, setOab] = useState('');
   const [uf, setUf] = useState('');
-  const [cpf, setCpf] = useState('');
 
+  // Shared
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { login } = useAuth();
@@ -69,42 +61,34 @@ export default function Login() {
 
   const handleOabLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!oab || !uf || !cpf) {
-      setError('Preencha OAB, UF e CPF.');
-      return;
-    }
-    if (cpf.replace(/\D/g, '').length !== 11) {
-      setError('CPF inválido.');
+    if (!oab || !uf || !password) {
+      setError('Preencha OAB, UF e senha.');
       return;
     }
     setLoading(true);
     setError('');
     try {
+      // Look up email by OAB via edge function
       const { data, error: fnError } = await supabase.functions.invoke('login-oab', {
-        body: { action: 'login', oab, uf, cpf },
+        body: { action: 'lookup', oab, uf },
       });
 
       if (fnError || data?.error) {
-        setError(data?.error || fnError?.message || 'Erro ao fazer login.');
+        setError(data?.error || 'OAB não encontrada. Verifique os dados ou cadastre-se.');
         return;
       }
 
-      // Use the token to verify OTP and create session
-      const { error: verifyError } = await supabase.auth.verifyOtp({
-        email: data.email,
-        token: data.token_hash,
-        type: 'magiclink',
-      });
-
-      if (verifyError) {
-        console.error('OTP verify error:', verifyError);
-        setError('Erro ao autenticar. Tente novamente.');
-        return;
-      }
-
+      // Now sign in with the found email + password
+      await login(data.email, password);
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Erro ao fazer login.');
+      if (err?.message?.includes('Email not confirmed')) {
+        setError('E-mail não confirmado. Verifique sua caixa de entrada.');
+      } else if (err?.message?.includes('Invalid login credentials')) {
+        setError('OAB ou senha inválidos.');
+      } else {
+        setError(err?.message || 'Erro ao fazer login.');
+      }
     } finally {
       setLoading(false);
     }
@@ -147,7 +131,7 @@ export default function Login() {
               )}
             >
               <Scale className="h-4 w-4" />
-              OAB + CPF
+              OAB + Senha
             </button>
             <button
               type="button"
@@ -171,7 +155,7 @@ export default function Login() {
             </Alert>
           )}
 
-          {/* OAB + CPF Login */}
+          {/* OAB + Senha Login */}
           {mode === 'oab' && (
             <form onSubmit={handleOabLogin} className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
@@ -198,13 +182,23 @@ export default function Login() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium mb-1.5 block">CPF</label>
-                <Input
-                  placeholder="000.000.000-00"
-                  value={cpf}
-                  onChange={(e) => setCpf(formatCPF(e.target.value))}
-                  maxLength={14}
-                />
+                <label className="text-sm font-medium mb-1.5 block">Senha</label>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Sua senha"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
                 {loading ? (
@@ -219,7 +213,7 @@ export default function Login() {
             </form>
           )}
 
-          {/* Email + Password Login */}
+          {/* Email + Senha Login */}
           {mode === 'email' && (
             <form onSubmit={handleEmailLogin} className="space-y-4">
               <div>
