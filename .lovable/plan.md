@@ -1,82 +1,171 @@
 
+# Convite de Cliente para Acompanhar Processo
 
-# Perfil do Cliente a partir dos dados da Judit
+## Resumo
+Permitir que o advogado convide um cliente para acompanhar um processo no Jarvis Jud. O backend decide automaticamente se o cliente ja existe ou precisa ser criado, mantendo a interface simples com um unico botao.
 
-## Objetivo
-Criar uma tabela `clientes` no banco de dados para persistir as informacoes das partes envolvidas e uma pagina de perfil acessivel ao clicar no nome do cliente dentro do card de processo.
+## Modelagem de Dados
 
-## Dados disponiveis da Judit (ja salvos no JSONB `partes`)
-- Nome completo
-- CPF ou CNPJ (com tipo do documento)
-- Lado no processo (Ativo/Passivo)
-- Advogados vinculados (nome, CPF, OAB)
+### Alteracoes na tabela `clientes`
+- Adicionar campo `auth_user_id` (UUID, nullable) - referencia ao usuario autenticado do cliente (preenchido quando o cliente cria conta ou ja possui uma)
+- Adicionar campo `status` (TEXT, default 'pendente') - status do cliente no sistema ('pendente' ou 'ativo')
 
-## Etapas
+### Nova tabela `cliente_processos`
+Tabela de vinculo entre cliente e processo, com controle de convite:
 
-### 1. Criar tabela `clientes` no banco de dados
-Nova tabela com os seguintes campos:
-- `id` (UUID, chave primaria)
-- `user_id` (UUID, referencia ao advogado dono)
-- `nome` (texto, nome completo)
-- `documento` (texto, CPF ou CNPJ)
-- `tipo_documento` (texto, "CPF" ou "CNPJ")
-- `tipo_pessoa` (texto, "fisica" ou "juridica")
-- `telefone`, `email`, `endereco`, `observacoes` (campos opcionais para preenchimento posterior pelo advogado)
-- `created_at`, `updated_at`
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| id | UUID | Chave primaria |
+| cliente_id | UUID | FK para clientes |
+| processo_id | UUID | FK para processos |
+| advogado_user_id | UUID | Advogado que fez o convite |
+| status | TEXT | 'pendente', 'aceito', 'ativo' |
+| token | TEXT | Token unico para link de aceite |
+| data_convite | TIMESTAMPTZ | Data do convite |
+| data_aceite | TIMESTAMPTZ | Data do aceite |
+| created_at | TIMESTAMPTZ | |
 
-Politicas RLS: advogado so ve/edita seus proprios clientes.
+- Constraint UNIQUE em (cliente_id, processo_id) para evitar duplicatas
+- RLS: advogado ve seus proprios convites; cliente (via auth_user_id) ve convites dirigidos a ele
 
-### 2. Popular clientes automaticamente na importacao
-Atualizar a edge function `import-processes` para, ao importar processos, extrair as partes do lado "Active" (clientes do advogado) e inserir/atualizar na tabela `clientes` usando upsert por `user_id + documento`.
+## Backend (Edge Functions)
 
-### 3. Popular clientes existentes
-Criar uma migration ou script que percorre os processos ja importados e extrai os clientes para a nova tabela.
+### 1. `convidar-processo`
+- Recebe: `cliente_id`, `processo_id`
+- Verifica se ja existe vinculo (impede duplicata)
+- Cria registro em `cliente_processos` com status 'pendente' e token unico
+- Se o cliente tem email cadastrado, envia email via Resend com link de ativacao
+- Retorna sucesso com o token gerado
 
-### 4. Criar pagina de perfil do cliente (`/clientes/:id`)
-Pagina com:
-- **Cabecalho**: Nome, CPF/CNPJ, tipo de pessoa
-- **Informacoes de contato**: telefone, email, endereco (editaveis pelo advogado)
-- **Lista de processos vinculados**: todos os processos onde essa parte aparece
-- **Observacoes**: campo de texto livre
+### 2. `aceitar-convite`
+- Recebe: `token`
+- Busca o convite pelo token
+- Se cliente nao tem `auth_user_id`:
+  - Redireciona para pagina de cadastro com dados pre-preenchidos (nome, CPF do cliente)
+  - Apos cadastro, vincula `auth_user_id` e muda status para 'ativo'
+- Se cliente ja tem `auth_user_id`:
+  - Muda status do vinculo para 'ativo'
+- Retorna dados do convite
 
-### 5. Atualizar o botao no card do processo
-O badge clicavel com o nome do cliente passara a ser um `Link` para `/clientes/:id` ao inves de apenas filtrar a busca.
+## Frontend
 
-### 6. Atualizar a pagina `/clientes` (ClientesList)
-Transformar a pagina vazia atual em uma lista real de clientes vindos da tabela, com busca por nome ou documento.
+### Pagina ClienteDetail (`/clientes/:id`)
+- Adicionar botao "Convidar para acompanhar processo" sempre visivel abaixo do cabecalho
+- Ao clicar, abre um Dialog listando os processos vinculados ao cliente (encontrados via `partes`)
+- Advogado seleciona o processo e confirma
+- Sistema chama a edge function `convidar-processo`
+- Exibe feedback de sucesso com o link de convite (para copiar/compartilhar)
+- Na secao de processos vinculados, mostrar o status do convite (pendente/ativo) ao lado de cada processo
 
-## Detalhes tecnicos
+### Pagina de Aceite (`/convite/:token`)
+- Nova rota publica (nao requer autenticacao)
+- Exibe dados do processo e do advogado
+- Se cliente nao tem conta: mostra formulario de cadastro com nome e CPF pre-preenchidos
+- Se cliente ja tem conta: mostra botao "Aceitar convite" (requer login)
+- Apos aceite, redireciona para o dashboard do cliente
 
-### Tabela SQL
-```sql
-CREATE TABLE public.clientes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL,
-  nome TEXT NOT NULL,
-  documento TEXT,
-  tipo_documento TEXT DEFAULT 'CPF',
-  tipo_pessoa TEXT DEFAULT 'fisica',
-  telefone TEXT,
-  email TEXT,
-  endereco TEXT,
-  observacoes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
--- Unique constraint e RLS policies
--- Trigger para updated_at
+### Dashboard do Cliente (`ClienteDashboard`)
+- Atualizar para buscar processos via `cliente_processos` onde `status = 'ativo'`
+- Exibir lista de processos com movimentacoes
+
+## Fluxo Completo
+
+```text
+Advogado abre perfil do cliente
+         |
+         v
+Clica "Convidar para acompanhar processo"
+         |
+         v
+Seleciona o processo no dialog
+         |
+         v
+Backend cria vinculo (cliente_processos)
+com status "pendente" + token unico
+         |
+         v
+Email enviado ao cliente (se email cadastrado)
++ Link copiavel para o advogado
+         |
+         v
+Cliente acessa o link /convite/:token
+         |
+    +---------+---------+
+    |                   |
+ Sem conta          Com conta
+    |                   |
+ Cadastro           Login +
+ pre-preenchido     Aceitar
+    |                   |
+    +-------------------+
+         |
+         v
+Status muda para "ativo"
+Processo aparece no painel do cliente
 ```
 
-### Arquivos modificados
-- `supabase/functions/import-processes/index.ts` - extrair e salvar clientes
-- `src/pages/processos/ProcessosList.tsx` - badge vira Link para perfil
-- `src/pages/clientes/ClientesList.tsx` - lista real de clientes
-- `src/pages/clientes/ClienteDetail.tsx` (novo) - pagina de perfil
-- `src/hooks/useClientes.ts` (novo) - hook para buscar clientes
-- `src/App.tsx` - adicionar rota `/clientes/:id`
+## Detalhes Tecnicos
 
-### Fluxo do usuario
-1. Advogado ve a lista de processos
-2. Clica no nome do cliente no card
-3. Abre o perfil do cliente com dados da Judit + processos vinculados
-4. Pode adicionar telefone, email e observacoes manualmente
+### Migration SQL
+```sql
+-- Adicionar campos na tabela clientes
+ALTER TABLE public.clientes
+  ADD COLUMN IF NOT EXISTS auth_user_id UUID,
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pendente';
+
+-- Tabela de vinculo cliente-processo
+CREATE TABLE public.cliente_processos (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  processo_id UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+  advogado_user_id UUID NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente',
+  token TEXT NOT NULL DEFAULT encode(gen_random_bytes(32), 'hex'),
+  data_convite TIMESTAMPTZ NOT NULL DEFAULT now(),
+  data_aceite TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(cliente_id, processo_id)
+);
+
+ALTER TABLE public.cliente_processos ENABLE ROW LEVEL SECURITY;
+
+-- RLS: advogado ve seus convites
+CREATE POLICY "Advogado can manage own invites"
+  ON public.cliente_processos FOR ALL
+  TO authenticated
+  USING (auth.uid() = advogado_user_id);
+
+-- RLS: cliente ve convites dirigidos a ele
+CREATE POLICY "Cliente can view own invites"
+  ON public.cliente_processos FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM clientes
+      WHERE clientes.id = cliente_processos.cliente_id
+      AND clientes.auth_user_id = auth.uid()
+    )
+  );
+
+-- RLS: cliente pode atualizar status do convite
+CREATE POLICY "Cliente can accept invites"
+  ON public.cliente_processos FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM clientes
+      WHERE clientes.id = cliente_processos.cliente_id
+      AND clientes.auth_user_id = auth.uid()
+    )
+  );
+```
+
+### Arquivos a criar/modificar
+- `supabase/migrations/` - Nova migration com tabela e alteracoes
+- `supabase/functions/convidar-processo/index.ts` - Edge function de convite
+- `supabase/functions/aceitar-convite/index.ts` - Edge function de aceite
+- `src/pages/clientes/ClienteDetail.tsx` - Adicionar botao + dialog de convite
+- `src/pages/convite/AceitarConvite.tsx` - Nova pagina publica de aceite
+- `src/pages/dashboard/ClienteDashboard.tsx` - Buscar processos vinculados
+- `src/hooks/useClienteProcessos.ts` - Hook para vinculos
+- `src/App.tsx` - Adicionar rota `/convite/:token`
