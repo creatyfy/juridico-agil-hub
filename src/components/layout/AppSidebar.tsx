@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   LayoutDashboard,
@@ -48,7 +48,13 @@ const adminMenu: MenuItem[] = [
 export default function AppSidebar() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   const menu = user?.role === 'admin' ? adminMenu : user?.role === 'cliente' ? clienteMenu : advogadoMenu;
 
@@ -99,7 +105,7 @@ export default function AppSidebar() {
           </div>
         )}
         <button
-          onClick={logout}
+          onClick={handleLogout}
           className="sidebar-item w-full justify-start text-sidebar-foreground/60 hover:text-destructive"
           title={collapsed ? 'Sair' : undefined}
         >

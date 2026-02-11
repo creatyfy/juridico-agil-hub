@@ -1,42 +1,44 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth, UserRole } from '@/contexts/AuthContext';
-import { Eye, EyeOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import logo from '@/assets/logo-jarvis-jud.png';
 
-type LoginTab = 'advogado' | 'cliente' | 'admin';
-
 export default function Login() {
-  const [searchParams] = useSearchParams();
-  const isRegister = searchParams.get('register') === 'true';
-  const [activeTab, setActiveTab] = useState<LoginTab>('advogado');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ field1: '', field2: '' });
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email || !password) {
+      setError('Preencha e-mail e senha.');
+      return;
+    }
     setLoading(true);
+    setError('');
     try {
-      await login(activeTab as UserRole, form);
+      await login(email, password);
       navigate('/dashboard');
-    } catch {
-      // handle error
+    } catch (err: any) {
+      if (err?.message?.includes('Email not confirmed')) {
+        setError('E-mail não confirmado. Verifique sua caixa de entrada.');
+      } else if (err?.message?.includes('Invalid login credentials')) {
+        setError('E-mail ou senha inválidos.');
+      } else {
+        setError(err?.message || 'Erro ao fazer login.');
+      }
     } finally {
       setLoading(false);
     }
   };
-
-  const tabs: { key: LoginTab; label: string }[] = [
-    { key: 'advogado', label: 'Advogado' },
-    { key: 'cliente', label: 'Cliente' },
-    { key: 'admin', label: 'Admin' },
-  ];
 
   return (
     <div className="min-h-screen flex">
@@ -57,86 +59,55 @@ export default function Login() {
             <img src={logo} alt="Jarvis Jud" className="h-10" />
           </div>
 
-          <h2 className="text-2xl font-bold text-center mb-2">
-            {isRegister ? 'Criar sua conta' : 'Bem-vindo de volta'}
-          </h2>
+          <h2 className="text-2xl font-bold text-center mb-2">Bem-vindo de volta</h2>
           <p className="text-muted-foreground text-center mb-8">
-            {isRegister ? 'Preencha os dados para começar' : 'Faça login para acessar sua conta'}
+            Faça login para acessar sua conta
           </p>
 
-          {/* Tabs */}
-          <div className="flex rounded-lg bg-secondary p-1 mb-6">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  'flex-1 py-2 text-sm font-medium rounded-md transition-all duration-200',
-                  activeTab === tab.key
-                    ? 'bg-card shadow-sm text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          {error && (
+            <Alert variant="destructive" className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {activeTab === 'advogado' && (
-              <>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Número da OAB</label>
-                  <input type="text" placeholder="Ex: 123456/SP" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Senha</label>
-                  <div className="relative">
-                    <input type={showPassword ? 'text' : 'password'} placeholder="Sua senha" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full pr-10" />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-            {activeTab === 'cliente' && (
-              <>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">CPF</label>
-                  <input type="text" placeholder="000.000.000-00" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Número do Processo</label>
-                  <input type="text" placeholder="0000000-00.0000.0.00.0000" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full" />
-                </div>
-              </>
-            )}
-            {activeTab === 'admin' && (
-              <>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">E-mail</label>
-                  <input type="email" placeholder="admin@exemplo.com" value={form.field1} onChange={(e) => setForm({ ...form, field1: e.target.value })} className="input-field w-full" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Senha</label>
-                  <div className="relative">
-                    <input type={showPassword ? 'text' : 'password'} placeholder="Sua senha" value={form.field2} onChange={(e) => setForm({ ...form, field2: e.target.value })} className="input-field w-full pr-10" />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">E-mail</label>
+              <Input
+                type="email"
+                placeholder="seu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Senha</label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Sua senha"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
             <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
               {loading ? (
                 <span className="flex items-center gap-2">
-                  <span className="h-4 w-4 border-2 border-accent-foreground/30 border-t-accent-foreground rounded-full animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                   Entrando...
                 </span>
               ) : (
-                isRegister ? 'Criar conta' : 'Entrar'
+                'Entrar'
               )}
             </Button>
           </form>
