@@ -73,6 +73,7 @@ Deno.serve(async (req) => {
       })
 
       const evoData = await evoRes.json()
+      console.log('Create instance response:', JSON.stringify(evoData))
 
       // Save instance in DB
       const { data: existing } = await supabase
@@ -98,8 +99,27 @@ Deno.serve(async (req) => {
           })
       }
 
+      // If create didn't return a QR code, fetch it via connect endpoint
+      let qrBase64 = evoData.qrcode?.base64 || null
+      let qrCode = evoData.qrcode?.code || null
+
+      if (!qrBase64) {
+        try {
+          const qrRes = await fetch(
+            `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
+            { headers: evoHeaders() }
+          )
+          const qrData = await qrRes.json()
+          console.log('Connect/QR response:', JSON.stringify(qrData))
+          qrBase64 = qrData.base64 || qrData.qrcode?.base64 || null
+          qrCode = qrData.code || qrData.qrcode?.code || null
+        } catch (e) {
+          console.error('QR fetch error:', e)
+        }
+      }
+
       return new Response(JSON.stringify({
-        qrcode: evoData.qrcode,
+        qrcode: { base64: qrBase64, code: qrCode },
         instance: instanceName,
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
