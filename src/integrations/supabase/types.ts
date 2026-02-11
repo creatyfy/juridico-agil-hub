@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      advogado_credentials: {
+        Row: {
+          cpf: string
+          created_at: string
+          email: string
+          id: string
+          oab: string
+          uf: string
+          user_id: string
+        }
+        Insert: {
+          cpf: string
+          created_at?: string
+          email: string
+          id?: string
+          oab: string
+          uf: string
+          user_id: string
+        }
+        Update: {
+          cpf?: string
+          created_at?: string
+          email?: string
+          id?: string
+          oab?: string
+          uf?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_verification_codes: {
         Row: {
           code: string
