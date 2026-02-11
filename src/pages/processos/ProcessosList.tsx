@@ -103,38 +103,6 @@ export default function ProcessosList() {
             </select>
           </div>
         </div>
-
-        {/* Quick party filter buttons */}
-        {(() => {
-          const allParties = new Map<string, string>();
-          processos.forEach(p => {
-            const partes = Array.isArray(p.partes) ? p.partes : [];
-            partes.forEach((pt: any) => {
-              if (pt.person_type !== 'Advogado' && pt.name) {
-                allParties.set(pt.name, pt.side);
-              }
-            });
-          });
-          const uniqueParties = Array.from(allParties.entries()).slice(0, 8);
-          if (uniqueParties.length === 0) return null;
-          return (
-            <div className="flex flex-wrap gap-1.5">
-              {uniqueParties.map(([name, side]) => (
-                <button
-                  key={name}
-                  onClick={() => setSearch(search === name ? '' : name)}
-                  className={`text-xs px-2.5 py-1 rounded-full border transition-all duration-150 cursor-pointer ${
-                    search === name
-                      ? 'bg-accent text-accent-foreground border-accent'
-                      : 'bg-card text-muted-foreground border-border hover:border-accent/40 hover:text-foreground'
-                  }`}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-          );
-        })()}
       </div>
 
       {/* Loading */}
@@ -151,6 +119,8 @@ export default function ProcessosList() {
             const partes = Array.isArray(proc.partes) ? proc.partes : [];
             const autor = partes.find((p: any) => p.side === 'Active' && p.person_type !== 'Advogado');
             const reu = partes.find((p: any) => p.side === 'Passive' && p.person_type !== 'Advogado');
+            // The lawyer's client is the Active-side party (autor)
+            const cliente = autor;
             const dataFormatada = proc.data_distribuicao
               ? format(new Date(proc.data_distribuicao), "dd/MM/yyyy", { locale: ptBR })
               : null;
@@ -202,6 +172,23 @@ export default function ProcessosList() {
                           </span>
                         )}
                       </div>
+
+                      {/* Client badge */}
+                      {cliente && (
+                        <div className="pt-1">
+                          <span
+                            onClick={(e) => { e.preventDefault(); setSearch(search === cliente.name ? '' : cliente.name); }}
+                            className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border cursor-pointer transition-all duration-150 ${
+                              search === cliente.name
+                                ? 'bg-accent text-accent-foreground border-accent'
+                                : 'bg-accent/5 text-accent border-accent/20 hover:bg-accent/10 hover:border-accent/40'
+                            }`}
+                          >
+                            <Users className="h-3 w-3" />
+                            {cliente.name}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Right side badges */}
