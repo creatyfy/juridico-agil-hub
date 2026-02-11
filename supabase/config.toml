@@ -1,1 +1,7 @@
 project_id = "kbnnydiiwtoeeqtijygj"
+
+[functions.convidar-processo]
+verify_jwt = false
+
+[functions.aceitar-convite]
+verify_jwt = false
