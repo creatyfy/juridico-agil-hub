@@ -33,7 +33,6 @@ const advogadoMenu: MenuItem[] = [
 
 const clienteMenu: MenuItem[] = [
   { label: 'Meus Processos', icon: FileText, path: '/dashboard' },
-  { label: 'Configurações', icon: Settings, path: '/configuracoes' },
 ];
 
 const adminMenu: MenuItem[] = [
