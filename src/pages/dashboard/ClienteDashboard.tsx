@@ -19,8 +19,21 @@ export default function ClienteDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchProcessos() {
+    async function autoAcceptAndFetch() {
       if (!user) return;
+
+      // Auto-accept pending invite if token stored
+      const pendingToken = localStorage.getItem('pending_invite_token');
+      if (pendingToken) {
+        localStorage.removeItem('pending_invite_token');
+        try {
+          await supabase.functions.invoke('aceitar-convite', {
+            body: { token: pendingToken, action: 'accept' },
+          });
+        } catch (e) {
+          console.error('Auto-accept failed:', e);
+        }
+      }
 
       // Find cliente record linked to this auth user
       const { data: cliente } = await supabase
@@ -56,7 +69,7 @@ export default function ClienteDashboard() {
       setLoading(false);
     }
 
-    fetchProcessos();
+    autoAcceptAndFetch();
   }, [user]);
 
   return (
