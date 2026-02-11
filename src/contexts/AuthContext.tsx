@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import type { User as SupabaseUser, Session } from '@supabase/supabase-js';
 
 export type UserRole = 'advogado' | 'cliente' | 'admin';
 
@@ -9,56 +10,75 @@ export interface User {
   email: string;
   role: UserRole;
   oab?: string;
+  uf?: string;
   cpf?: string;
+  whatsapp?: string;
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (role: UserRole, credentials: Record<string, string>) => Promise<void>;
-  logout: () => void;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const mockUsers: Record<UserRole, User> = {
-  advogado: {
-    id: '1',
-    name: 'Dr. Carlos Mendes',
-    email: 'carlos@escritorio.com',
-    role: 'advogado',
-    oab: '123456/SP',
-  },
-  cliente: {
-    id: '2',
-    name: 'Maria Silva',
-    email: 'maria@email.com',
-    role: 'cliente',
-    cpf: '123.456.789-00',
-  },
-  admin: {
-    id: '3',
-    name: 'Administrador',
-    email: 'admin@jurisai.com',
-    role: 'admin',
-  },
-};
+function mapSupabaseUser(su: SupabaseUser): User {
+  const meta = su.user_metadata || {};
+  return {
+    id: su.id,
+    name: meta.full_name || meta.name || su.email || '',
+    email: su.email || '',
+    role: (meta.role as UserRole) || 'advogado',
+    oab: meta.oab,
+    uf: meta.uf,
+    cpf: meta.cpf,
+    whatsapp: meta.whatsapp,
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const login = useCallback(async (role: UserRole, _credentials: Record<string, string>) => {
-    // Mock login - in production, this would validate against backend
-    await new Promise((r) => setTimeout(r, 800));
-    setUser(mockUsers[role]);
+  useEffect(() => {
+    // Set up auth state listener FIRST
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session: Session | null) => {
+        if (session?.user) {
+          setUser(mapSupabaseUser(session.user));
+        } else {
+          setUser(null);
+        }
+        setLoading(false);
+      }
+    );
+
+    // Then check existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(mapSupabaseUser(session.user));
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const logout = useCallback(() => {
+  const login = useCallback(async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  }, []);
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
