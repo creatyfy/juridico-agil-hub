@@ -171,7 +171,7 @@ export default function CadastroAdvogado() {
     setSubmitError('');
 
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data: signUpData, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.senha,
         options: {
@@ -191,6 +191,20 @@ export default function CadastroAdvogado() {
       if (error) {
         setSubmitError(error.message);
         return;
+      }
+
+      // Store OAB+CPF credentials for passwordless login
+      if (signUpData?.user) {
+        await supabase.functions.invoke('login-oab', {
+          body: {
+            action: 'register',
+            oab: form.oab,
+            uf: form.uf,
+            cpf: form.cpf,
+            email: form.email,
+            user_id: signUpData.user.id,
+          },
+        });
       }
 
       setCurrentStep(3);
