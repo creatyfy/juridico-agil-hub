@@ -136,6 +136,35 @@ serve(async (req) => {
 
           if (newMovs.length > 0) {
             await supabase.from('movimentacoes').insert(newMovs);
+
+            // Create notification for process owner
+            await supabase.from('notificacoes').insert({
+              user_id: mon.user_id,
+              tipo: 'movimentacao',
+              titulo: 'Nova movimentação processual',
+              mensagem: `${newMovs.length} nova(s) movimentação(ões) no processo ${processo.numero_cnj}`,
+              link: `/processos/${processo.id}`,
+            });
+
+            // Notify linked clients
+            const { data: linkedClients } = await supabase
+              .from('cliente_processos')
+              .select('clientes(auth_user_id)')
+              .eq('processo_id', processo.id)
+              .eq('status', 'ativo');
+
+            for (const lc of (linkedClients || [])) {
+              const authUserId = (lc as any).clientes?.auth_user_id;
+              if (authUserId) {
+                await supabase.from('notificacoes').insert({
+                  user_id: authUserId,
+                  tipo: 'movimentacao',
+                  titulo: 'Nova movimentação no seu processo',
+                  mensagem: `${newMovs.length} nova(s) movimentação(ões) no processo ${processo.numero_cnj}`,
+                  link: `/processos/${processo.id}`,
+                });
+              }
+            }
           }
 
           syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovs.length });

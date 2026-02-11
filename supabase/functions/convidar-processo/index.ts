@@ -81,6 +81,30 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Get processo info for notification
+    const { data: processo } = await supabase
+      .from("processos")
+      .select("numero_cnj")
+      .eq("id", processo_id)
+      .single();
+
+    // Create notification for client if they have auth_user_id
+    const { data: clienteForNotif } = await supabase
+      .from("clientes")
+      .select("auth_user_id, nome")
+      .eq("id", cliente_id)
+      .single();
+
+    if (clienteForNotif?.auth_user_id) {
+      await supabase.from("notificacoes").insert({
+        user_id: clienteForNotif.auth_user_id,
+        tipo: "convite",
+        titulo: "Novo processo vinculado",
+        mensagem: `Você foi convidado para acompanhar o processo ${processo?.numero_cnj || ''}`.trim(),
+        link: `/dashboard`,
+      });
+    }
+
     // Try to send email if client has email
     const { data: cliente } = await supabase
       .from("clientes")
