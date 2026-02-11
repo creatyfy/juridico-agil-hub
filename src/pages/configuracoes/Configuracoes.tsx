@@ -1,9 +1,12 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Save } from 'lucide-react';
+import { Save, Wifi, WifiOff, CheckCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { useWhatsApp } from '@/hooks/useWhatsApp';
 
 export default function Configuracoes() {
   const { user } = useAuth();
+  const wpp = useWhatsApp();
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -45,13 +48,28 @@ export default function Configuracoes() {
         </div>
       </div>
 
-      {/* Integrations placeholder */}
+      {/* WhatsApp Integration */}
       {user?.role === 'advogado' && (
         <div className="card-elevated p-6">
-          <h3 className="text-lg font-semibold mb-4">Integrações</h3>
-          <p className="text-sm text-muted-foreground">
-            Nenhuma integração configurada. Em breve você poderá conectar WhatsApp, tribunais e mais.
-          </p>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">WhatsApp / Evolution API</h3>
+            {wpp.status === 'connected' ? (
+              <Badge variant="default" className="bg-green-600"><Wifi className="h-3 w-3 mr-1" />Conectado</Badge>
+            ) : (
+              <Badge variant="outline"><WifiOff className="h-3 w-3 mr-1" />Desconectado</Badge>
+            )}
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <span>Credenciais configuradas no backend</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {wpp.status === 'connected' 
+                ? 'Seu WhatsApp está conectado. Acesse a página de Atendimento para gerenciar conversas.'
+                : 'Acesse a página de Atendimento para conectar seu WhatsApp via QR Code.'}
+            </p>
+          </div>
         </div>
       )}
     </div>

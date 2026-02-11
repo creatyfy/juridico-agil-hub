@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.auto-accept-invites]
 verify_jwt = false
+
+[functions.evolution-whatsapp]
+verify_jwt = false
+
+[functions.evolution-webhook]
+verify_jwt = false
