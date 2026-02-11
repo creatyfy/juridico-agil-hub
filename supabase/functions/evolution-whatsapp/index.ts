@@ -51,7 +51,18 @@ Deno.serve(async (req) => {
     if (action === 'connect') {
       const instanceName = `jarvis_${user.id.substring(0, 8)}`
       
-      // Create instance on Evolution API
+      // Try to delete existing instance first to get a fresh QR code
+      try {
+        await fetch(`${EVOLUTION_API_URL}/instance/delete/${instanceName}`, {
+          method: 'DELETE',
+          headers: evoHeaders(),
+        })
+        console.log('Deleted existing instance (if any)')
+      } catch (_e) {
+        // Ignore - instance may not exist
+      }
+
+      // Create fresh instance on Evolution API
       const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
         method: 'POST',
         headers: evoHeaders(),
@@ -99,27 +110,33 @@ Deno.serve(async (req) => {
           })
       }
 
-      // If create didn't return a QR code, fetch it via connect endpoint
+      // Get QR code with retry logic - Evolution API needs time to generate
       let qrBase64 = evoData.qrcode?.base64 || null
-      let qrCode = evoData.qrcode?.code || null
+      let qrCode = evoData.code || evoData.qrcode?.code || null
+      let pairingCode = evoData.pairingCode || null
 
-      if (!qrBase64) {
-        try {
-          const qrRes = await fetch(
-            `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
-            { headers: evoHeaders() }
-          )
-          const qrData = await qrRes.json()
-          console.log('Connect/QR response:', JSON.stringify(qrData))
-          qrBase64 = qrData.base64 || qrData.qrcode?.base64 || null
-          qrCode = qrData.code || qrData.qrcode?.code || null
-        } catch (e) {
-          console.error('QR fetch error:', e)
+      if (!qrCode && !qrBase64) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await new Promise(r => setTimeout(r, 3000))
+          try {
+            const qrRes = await fetch(
+              `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
+              { headers: evoHeaders() }
+            )
+            const qrData = await qrRes.json()
+            console.log(`Connect/QR attempt ${attempt + 1}:`, JSON.stringify(qrData))
+            qrBase64 = qrData.base64 || null
+            qrCode = qrData.code || null
+            pairingCode = qrData.pairingCode || null
+            if (qrCode || qrBase64) break
+          } catch (e) {
+            console.error('QR fetch error:', e)
+          }
         }
       }
 
       return new Response(JSON.stringify({
-        qrcode: { base64: qrBase64, code: qrCode },
+        qrcode: { base64: qrBase64, code: qrCode, pairingCode },
         instance: instanceName,
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
