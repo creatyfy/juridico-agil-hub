@@ -198,7 +198,7 @@ export default function Atendimento() {
         </div>
         <div className="flex items-center gap-2">
           <StatusIndicator status={wpp.status} />
-          {wpp.status === 'connected' && (
+          {(wpp.status === 'connected' || wpp.status === 'connecting') && (
             <Button variant="outline" size="sm" onClick={wpp.disconnect} disabled={wpp.loading}>
               <WifiOff className="h-3 w-3 mr-1" />Desconectar
             </Button>
