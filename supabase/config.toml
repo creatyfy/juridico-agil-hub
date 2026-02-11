@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.aceitar-convite]
 verify_jwt = false
+
+[functions.auto-accept-invites]
+verify_jwt = false

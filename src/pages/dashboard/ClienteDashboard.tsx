@@ -22,7 +22,7 @@ export default function ClienteDashboard() {
     async function autoAcceptAndFetch() {
       if (!user) return;
 
-      // Auto-accept pending invite if token stored
+      // Auto-accept pending invite if token stored (fallback)
       const pendingToken = localStorage.getItem('pending_invite_token');
       if (pendingToken) {
         localStorage.removeItem('pending_invite_token');
@@ -31,8 +31,15 @@ export default function ClienteDashboard() {
             body: { token: pendingToken, action: 'accept' },
           });
         } catch (e) {
-          console.error('Auto-accept failed:', e);
+          console.error('Auto-accept via token failed:', e);
         }
+      }
+
+      // Auto-accept invites by CPF (robust backend mechanism)
+      try {
+        await supabase.functions.invoke('auto-accept-invites');
+      } catch (e) {
+        console.error('Auto-accept via CPF failed:', e);
       }
 
       // Find cliente record linked to this auth user
