@@ -80,6 +80,8 @@ export function useWhatsApp() {
       const res = await callEvolution('connect', undefined, {});
       if (res.qrcode?.base64) {
         setQrCode(res.qrcode.base64);
+      } else if (res.qrcode?.code) {
+        setQrCode(res.qrcode.code);
       }
       setStatus('connecting');
     } finally {
@@ -92,6 +94,8 @@ export function useWhatsApp() {
       const res = await callEvolution('qrcode');
       if (res.qrcode) {
         setQrCode(res.qrcode);
+      } else if (res.code) {
+        setQrCode(res.code);
       }
     } catch (e) {
       console.error('QR refresh error:', e);

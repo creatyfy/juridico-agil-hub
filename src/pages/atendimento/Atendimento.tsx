@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,9 +27,15 @@ function QrCodeView({ qrCode, onRefresh, loading }: { qrCode: string | null; onR
         </p>
       </div>
       {qrCode ? (
-        <div className="bg-white p-4 rounded-xl shadow-md">
-          <img src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`} alt="QR Code" className="w-64 h-64" />
-        </div>
+        qrCode.startsWith('data:') || qrCode.length > 500 ? (
+          <div className="bg-white p-4 rounded-xl shadow-md">
+            <img src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`} alt="QR Code" className="w-64 h-64" />
+          </div>
+        ) : (
+          <div className="bg-white p-4 rounded-xl shadow-md">
+            <QRCodeSVG value={qrCode} size={256} />
+          </div>
+        )
       ) : (
         <div className="w-64 h-64 bg-muted rounded-xl flex items-center justify-center">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
