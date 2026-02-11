@@ -39,10 +39,12 @@ serve(async (req) => {
           'Content-Type': 'application/json',
           'api-key': JUDIT_API_KEY,
         },
-        body: JSON.stringify({
-          search_type: search_type || 'oab',
-          search_key: search_key,
-          response_type: 'lawsuit',
+         body: JSON.stringify({
+          search: {
+            search_type: search_type || 'oab',
+            search_key: search_key,
+            response_type: 'lawsuit',
+          },
         }),
       });
 
