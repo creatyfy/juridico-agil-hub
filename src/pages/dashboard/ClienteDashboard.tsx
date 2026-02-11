@@ -1,54 +1,23 @@
-import TimelineEvent from '@/components/TimelineEvent';
-import StatusBadge from '@/components/StatusBadge';
-
-const processos = [
-  {
-    numero: '0001234-56.2025.8.26.0100',
-    vara: '1ª Vara Cível — São Paulo/SP',
-    status: 'Em andamento',
-    advogado: 'Dr. Carlos Mendes',
-    movimentacoes: [
-      { date: '09/02/2026', title: 'Despacho publicado', description: 'Intimação para manifestação em 15 dias.', type: 'important' as const },
-      { date: '01/02/2026', title: 'Petição protocolada', description: 'Petição intermediária juntada aos autos.', type: 'default' as const },
-      { date: '15/01/2026', title: 'Distribuição', description: 'Processo distribuído à 1ª Vara Cível.', type: 'default' as const },
-    ],
-  },
-];
+import { useAuth } from '@/contexts/AuthContext';
+import { FileText } from 'lucide-react';
 
 export default function ClienteDashboard() {
+  const { user } = useAuth();
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Meus Processos</h1>
+        <h1 className="text-2xl font-bold">Olá, {user?.name?.split(' ')[0] || 'Cliente'}</h1>
         <p className="text-muted-foreground text-sm mt-1">Acompanhe o andamento dos seus processos</p>
       </div>
 
-      {processos.map((p, i) => (
-        <div key={i} className="card-elevated p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
-            <div>
-              <p className="font-mono text-sm text-muted-foreground">{p.numero}</p>
-              <p className="text-sm mt-1">{p.vara}</p>
-              <p className="text-xs text-muted-foreground mt-1">Advogado: {p.advogado}</p>
-            </div>
-            <StatusBadge variant="info">{p.status}</StatusBadge>
-          </div>
-
-          <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Movimentações</h3>
-          <div className="space-y-0">
-            {p.movimentacoes.map((m, j) => (
-              <TimelineEvent
-                key={j}
-                date={m.date}
-                title={m.title}
-                description={m.description}
-                type={m.type}
-                isLast={j === p.movimentacoes.length - 1}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+      <div className="card-elevated flex flex-col items-center justify-center p-16 text-center">
+        <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
+        <h3 className="text-lg font-semibold text-muted-foreground">Nenhum processo encontrado</h3>
+        <p className="text-sm text-muted-foreground/70 mt-1 max-w-sm">
+          Seus processos aparecerão aqui quando seu advogado vinculá-los à sua conta.
+        </p>
+      </div>
     </div>
   );
 }
