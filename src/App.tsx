@@ -42,12 +42,12 @@ function AppRoutes() {
       {/* Protected app routes */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/processos" element={<ProcessosList />} />
+        <Route path="/processos" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ProcessosList /></ProtectedRoute>} />
         <Route path="/processos/:id" element={<ProcessoDetail />} />
-        <Route path="/clientes" element={<ClientesList />} />
-        <Route path="/clientes/:id" element={<ClienteDetail />} />
-        <Route path="/atendimento" element={<Atendimento />} />
-        <Route path="/configuracoes" element={<Configuracoes />} />
+        <Route path="/clientes" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClientesList /></ProtectedRoute>} />
+        <Route path="/clientes/:id" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClienteDetail /></ProtectedRoute>} />
+        <Route path="/atendimento" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><Atendimento /></ProtectedRoute>} />
+        <Route path="/configuracoes" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><Configuracoes /></ProtectedRoute>} />
 
         {/* Admin routes */}
         <Route path="/admin/advogados" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
