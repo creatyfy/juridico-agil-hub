@@ -66,9 +66,11 @@ serve(async (req) => {
             'api-key': JUDIT_API_KEY,
           },
           body: JSON.stringify({
-            search_type: 'lawsuit_cnj',
-            search_key: processo.numero_cnj,
-            response_type: 'lawsuit',
+            search: {
+              search_type: 'lawsuit_cnj',
+              search_key: processo.numero_cnj,
+              response_type: 'lawsuit',
+            },
           }),
         });
 
