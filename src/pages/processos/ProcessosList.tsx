@@ -17,10 +17,13 @@ export default function ProcessosList() {
   const { processos, loading, refetch } = useProcessos();
 
   const filtered = processos.filter(p => {
+    const partes = Array.isArray(p.partes) ? p.partes : [];
+    const partesNames = partes.map((pt: any) => (pt.name || '').toLowerCase()).join(' ');
     const matchSearch = !search ||
       p.numero_cnj.toLowerCase().includes(search.toLowerCase()) ||
       (p.classe || '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.tribunal || '').toLowerCase().includes(search.toLowerCase());
+      (p.tribunal || '').toLowerCase().includes(search.toLowerCase()) ||
+      partesNames.includes(search.toLowerCase());
     const matchStatus = !statusFilter || p.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -75,29 +78,63 @@ export default function ProcessosList() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Buscar por número, classe ou tribunal..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="input-field w-full pl-10"
-          />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Buscar por número, classe, tribunal ou nome da parte..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="input-field w-full pl-10"
+            />
+          </div>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="input-field pl-10 pr-8 appearance-none cursor-pointer min-w-[180px]"
+            >
+              <option value="">Todos os status</option>
+              <option value="ativo">Ativo</option>
+              <option value="arquivado">Arquivado</option>
+            </select>
+          </div>
         </div>
-        <div className="relative">
-          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="input-field pl-10 pr-8 appearance-none cursor-pointer min-w-[180px]"
-          >
-            <option value="">Todos os status</option>
-            <option value="ativo">Ativo</option>
-            <option value="arquivado">Arquivado</option>
-          </select>
-        </div>
+
+        {/* Quick party filter buttons */}
+        {(() => {
+          const allParties = new Map<string, string>();
+          processos.forEach(p => {
+            const partes = Array.isArray(p.partes) ? p.partes : [];
+            partes.forEach((pt: any) => {
+              if (pt.person_type !== 'Advogado' && pt.name) {
+                allParties.set(pt.name, pt.side);
+              }
+            });
+          });
+          const uniqueParties = Array.from(allParties.entries()).slice(0, 8);
+          if (uniqueParties.length === 0) return null;
+          return (
+            <div className="flex flex-wrap gap-1.5">
+              {uniqueParties.map(([name, side]) => (
+                <button
+                  key={name}
+                  onClick={() => setSearch(search === name ? '' : name)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-all duration-150 cursor-pointer ${
+                    search === name
+                      ? 'bg-accent text-accent-foreground border-accent'
+                      : 'bg-card text-muted-foreground border-border hover:border-accent/40 hover:text-foreground'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Loading */}
