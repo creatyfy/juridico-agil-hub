@@ -339,6 +339,124 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_contatos: {
+        Row: {
+          created_at: string
+          foto_url: string | null
+          id: string
+          instancia_id: string
+          nome: string | null
+          numero: string | null
+          remote_jid: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          foto_url?: string | null
+          id?: string
+          instancia_id: string
+          nome?: string | null
+          numero?: string | null
+          remote_jid: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          foto_url?: string | null
+          id?: string
+          instancia_id?: string
+          nome?: string | null
+          numero?: string | null
+          remote_jid?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_contatos_instancia_id_fkey"
+            columns: ["instancia_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_instancias: {
+        Row: {
+          created_at: string
+          id: string
+          instance_id: string | null
+          instance_name: string
+          phone_number: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          instance_name: string
+          phone_number?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instance_id?: string | null
+          instance_name?: string
+          phone_number?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      whatsapp_mensagens: {
+        Row: {
+          conteudo: string | null
+          created_at: string
+          direcao: string
+          id: string
+          instancia_id: string
+          message_id: string | null
+          remote_jid: string
+          timestamp: string
+          tipo: string | null
+        }
+        Insert: {
+          conteudo?: string | null
+          created_at?: string
+          direcao?: string
+          id?: string
+          instancia_id: string
+          message_id?: string | null
+          remote_jid: string
+          timestamp?: string
+          tipo?: string | null
+        }
+        Update: {
+          conteudo?: string | null
+          created_at?: string
+          direcao?: string
+          id?: string
+          instancia_id?: string
+          message_id?: string | null
+          remote_jid?: string
+          timestamp?: string
+          tipo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_mensagens_instancia_id_fkey"
+            columns: ["instancia_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
