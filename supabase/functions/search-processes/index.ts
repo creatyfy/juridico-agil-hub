@@ -43,7 +43,7 @@ serve(async (req) => {
           search: {
             search_type: search_type || 'oab',
             search_key: search_key,
-            response_type: 'lawsuit',
+            response_type: (search_type === 'lawsuit_cnj') ? 'lawsuit' : 'lawsuits',
           },
         }),
       });
