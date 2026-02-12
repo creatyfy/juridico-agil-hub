@@ -63,10 +63,11 @@ export function useWhatsApp() {
         setStatus('disconnected');
       } else if (res.status === 'connected') {
         setStatus('connected');
+        // Ensure webhook is configured when connected
+        callEvolution('set-webhook', undefined, {}).catch(() => {});
       } else if (res.status === 'connecting') {
         setStatus('connecting');
       } else {
-        // Only set disconnected if we're not actively trying to connect
         setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
       }
     } catch {
@@ -117,6 +118,17 @@ export function useWhatsApp() {
   }, []);
 
   const loadConversations = useCallback(async () => {
+    // Try to fetch chats directly from Evolution API first
+    try {
+      const res = await callEvolution('fetch-chats', undefined, {});
+      if (res.conversations && res.conversations.length > 0) {
+        setConversations(res.conversations);
+        return;
+      }
+    } catch (e) {
+      console.error('fetch-chats error:', e);
+    }
+    // Fallback to DB-based conversations
     const res = await callEvolution('conversations');
     setConversations(res.conversations || []);
   }, []);
