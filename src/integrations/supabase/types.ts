@@ -420,7 +420,7 @@ export type Database = {
           direcao: string
           id: string
           instancia_id: string
-          message_id: string | null
+          message_id: string
           remote_jid: string
           timestamp: string
           tipo: string | null
@@ -431,7 +431,7 @@ export type Database = {
           direcao?: string
           id?: string
           instancia_id: string
-          message_id?: string | null
+          message_id?: string
           remote_jid: string
           timestamp?: string
           tipo?: string | null
@@ -442,7 +442,7 @@ export type Database = {
           direcao?: string
           id?: string
           instancia_id?: string
-          message_id?: string | null
+          message_id?: string
           remote_jid?: string
           timestamp?: string
           tipo?: string | null
