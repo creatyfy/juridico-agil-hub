@@ -86,10 +86,8 @@ Deno.serve(async (req) => {
         })
       }
       
-      // Get chats from Evolution API - try multiple endpoints
+      // Step 1: Get chats from findChats
       let chats: any[] = []
-      
-      // Try POST /chat/findChats first (v2 format)
       try {
         const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instance.instance_name}`, {
           method: 'POST',
@@ -97,35 +95,65 @@ Deno.serve(async (req) => {
           body: JSON.stringify({}),
         })
         const data = await evoRes.json()
-        console.log('findChats response:', JSON.stringify(data).substring(0, 500))
+        console.log('findChats count:', Array.isArray(data) ? data.length : 'not array')
         if (Array.isArray(data)) chats = data
       } catch (e) {
         console.error('findChats error:', e)
       }
 
-      // If empty, try GET /chat/findContacts
-      if (chats.length === 0) {
-        try {
-          const evoRes2 = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instance.instance_name}`, {
-            method: 'POST',
-            headers: evoHeaders(),
-            body: JSON.stringify({}),
-          })
-          const data2 = await evoRes2.json()
-          console.log('findContacts response:', JSON.stringify(data2).substring(0, 500))
-          if (Array.isArray(data2)) chats = data2
-        } catch (e) {
-          console.error('findContacts error:', e)
+      // Step 2: Get contacts with names from findContacts
+      let contactsMap = new Map<string, any>()
+      try {
+        const contactsRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instance.instance_name}`, {
+          method: 'POST',
+          headers: evoHeaders(),
+          body: JSON.stringify({}),
+        })
+        const contactsData = await contactsRes.json()
+        console.log('findContacts count:', Array.isArray(contactsData) ? contactsData.length : 'not array')
+        if (Array.isArray(contactsData)) {
+          for (const contact of contactsData) {
+            const jid = contact.remoteJid || contact.id
+            if (jid) contactsMap.set(jid, contact)
+          }
+          // If no chats from findChats, use contacts that have recent messages
+          if (chats.length === 0) {
+            chats = contactsData.filter((c: any) => c.remoteJid || c.id)
+          }
         }
+      } catch (e) {
+        console.error('findContacts error:', e)
       }
 
-      if (!Array.isArray(chats) || chats.length === 0) {
-        return new Response(JSON.stringify({ conversations: [], debug: 'no chats found from Evolution API' }), {
+      if (chats.length === 0) {
+        return new Response(JSON.stringify({ conversations: [], debug: 'no chats found' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
 
-      // Map chats to conversations format
+      // Step 3: Fetch profile pictures in batch (up to 30)
+      const jidsToFetchPic = chats
+        .map((c: any) => c.remoteJid || c.id)
+        .filter((jid: string) => jid && !jid.includes('@g.us') && jid !== 'status@broadcast')
+        .slice(0, 30)
+      
+      const profilePics = new Map<string, string>()
+      await Promise.all(jidsToFetchPic.map(async (jid: string) => {
+        try {
+          const number = jid.replace('@s.whatsapp.net', '').replace('@lid', '')
+          const picRes = await fetch(`${EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instance.instance_name}`, {
+            method: 'POST',
+            headers: evoHeaders(),
+            body: JSON.stringify({ number }),
+          })
+          const picData = await picRes.json()
+          if (picData?.profilePictureUrl || picData?.picture) {
+            profilePics.set(jid, picData.profilePictureUrl || picData.picture)
+          }
+        } catch (_) {}
+      }))
+
+      // Step 4: Map to conversations
       const conversations = chats
         .filter((c: any) => {
           const jid = c.remoteJid || c.id
@@ -134,20 +162,35 @@ Deno.serve(async (req) => {
         .map((c: any) => {
           const jid = c.remoteJid || c.id
           const isGroup = jid?.includes('@g.us')
+          const contact = contactsMap.get(jid)
           const lastMsg = c.lastMessage?.message?.conversation 
             || c.lastMessage?.message?.extendedTextMessage?.text
             || c.lastMsgContent || ''
+          const stickerMsg = c.lastMessage?.message?.stickerMessage ? '🏷️ Figurinha' : null
+          const imageMsg = c.lastMessage?.message?.imageMessage ? '📷 Imagem' : null
+          const audioMsg = c.lastMessage?.message?.audioMessage ? '🎤 Áudio' : null
+          const videoMsg = c.lastMessage?.message?.videoMessage ? '🎥 Vídeo' : null
+          const docMsg = c.lastMessage?.message?.documentMessage ? '📎 Documento' : null
+          const displayMsg = lastMsg || stickerMsg || imageMsg || audioMsg || videoMsg || docMsg || ''
+          
+          // Priority for name: contact saved name > pushName > number
+          const contactName = contact?.pushName || contact?.name || c.pushName || c.name
+          const displayName = contactName || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '').replace('@lid', '')) || ''
+          
           return {
             remote_jid: jid,
-            nome: c.pushName || c.name || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '')) || '',
-            numero: isGroup ? '' : jid?.replace('@s.whatsapp.net', '') || '',
-            foto_url: c.profilePicUrl || c.profilePictureUrl || null,
-            last_message: lastMsg,
+            nome: displayName,
+            numero: isGroup ? '' : jid?.replace('@s.whatsapp.net', '').replace('@lid', '') || '',
+            foto_url: profilePics.get(jid) || c.profilePicUrl || c.profilePictureUrl || contact?.profilePictureUrl || null,
+            last_message: displayMsg,
             last_timestamp: c.updatedAt || new Date().toISOString(),
             direcao: 'in',
             is_group: isGroup,
           }
         })
+
+      // Sort: most recent first
+      conversations.sort((a: any, b: any) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime())
 
       return new Response(JSON.stringify({ conversations }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
