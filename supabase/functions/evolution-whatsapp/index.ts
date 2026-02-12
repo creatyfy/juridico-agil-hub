@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
         console.error('findContacts POST error:', e)
       }
 
-      // Attempt 2: If contacts empty, try GET /contact/find
+      // Attempt 2: contact/find - handle both array and object with contacts property
       if (contactsMap.size === 0) {
         try {
           const res = await fetch(`${EVOLUTION_API_URL}/contact/find/${instance.instance_name}`, {
@@ -143,20 +143,31 @@ Deno.serve(async (req) => {
             body: JSON.stringify({ where: {} }),
           })
           const data = await res.json()
-          console.log('contact/find count:', Array.isArray(data) ? data.length : typeof data)
-          if (Array.isArray(data)) {
-            for (const c of data) {
-              const jid = c.remoteJid || c.id || c.wuid
-              if (jid) contactsMap.set(jid, c)
-            }
+          console.log('contact/find raw type:', typeof data, 'keys:', data ? Object.keys(data).slice(0, 5) : 'null')
+          const contacts = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : Array.isArray(data?.data) ? data.data : []
+          console.log('contact/find resolved count:', contacts.length)
+          for (const c of contacts) {
+            const jid = c.remoteJid || c.id || c.wuid
+            if (jid) contactsMap.set(jid, c)
           }
         } catch (e) {
           console.error('contact/find error:', e)
         }
       }
 
-      // Attempt 3: DB contacts as fallback
-      if (contactsMap.size === 0) {
+      // Attempt 3: Extract names from chat objects themselves (pushName, lastMessage.pushName)
+      for (const c of chats) {
+        const jid = c.remoteJid || c.id
+        if (!jid || contactsMap.has(jid)) continue
+        // For individual chats, the lastMessage.pushName has the contact's WhatsApp profile name
+        const nameFromChat = c.pushName || c.lastMessage?.pushName
+        if (nameFromChat) {
+          contactsMap.set(jid, { pushName: nameFromChat })
+        }
+      }
+
+      // Attempt 4: DB contacts as fallback for any remaining
+      {
         const svc = getServiceSupabase()
         const { data: dbContacts } = await svc
           .from('whatsapp_contatos')
@@ -164,9 +175,11 @@ Deno.serve(async (req) => {
           .eq('instancia_id', instance.id)
         if (dbContacts) {
           for (const c of dbContacts) {
-            contactsMap.set(c.remote_jid, { pushName: c.nome, profilePictureUrl: c.foto_url })
+            if (!contactsMap.has(c.remote_jid) && c.nome) {
+              contactsMap.set(c.remote_jid, { pushName: c.nome, profilePictureUrl: c.foto_url })
+            }
           }
-          console.log('DB contacts fallback count:', dbContacts.length)
+          console.log('DB contacts count:', dbContacts.length)
         }
       }
 
@@ -239,10 +252,12 @@ Deno.serve(async (req) => {
           // 1. contact.name (saved in phone contacts)
           // 2. contact.pushName (WhatsApp profile name)
           // 3. chat object name/pushName/subject (for groups)
-          // 4. number as fallback
+          // 4. lastMessage.pushName (profile name from last message sender, useful for 1:1 chats)
+          // 5. number as fallback
           const contactName = contact?.name || contact?.pushName || contact?.formattedName
           const chatName = c.name || c.pushName || c.subject || c.groupMetadata?.subject
-          const displayName = contactName || chatName || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '').replace('@lid', '')) || ''
+          const lastMsgPushName = !isGroup ? c.lastMessage?.pushName : null
+          const displayName = contactName || chatName || lastMsgPushName || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '').replace('@lid', '')) || ''
 
           return {
             remote_jid: jid,
@@ -259,6 +274,23 @@ Deno.serve(async (req) => {
         })
 
       conversations.sort((a: any, b: any) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime())
+
+      // Save resolved contact names to DB for future use (fire and forget)
+      const svc = getServiceSupabase()
+      const contactsToSave = conversations
+        .filter((c: any) => !c.is_group && c.nome && c.nome !== c.numero && c.numero)
+        .map((c: any) => ({
+          instancia_id: instance.id,
+          remote_jid: c.remote_jid,
+          nome: c.nome,
+          numero: c.numero,
+          foto_url: c.foto_url,
+        }))
+      if (contactsToSave.length > 0) {
+        svc.from('whatsapp_contatos')
+          .upsert(contactsToSave, { onConflict: 'instancia_id,remote_jid' })
+          .then(({ error }) => { if (error) console.error('Save contacts error:', error) })
+      }
 
       return new Response(JSON.stringify({ conversations }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
