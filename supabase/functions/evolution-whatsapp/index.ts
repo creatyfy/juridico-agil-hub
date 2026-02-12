@@ -303,92 +303,10 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Try to get messages from Evolution API
-      let apiMessages: any[] = []
-      try {
-        const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findMessages/${instance.instance_name}`, {
-          method: 'POST',
-          headers: evoHeaders(),
-          body: JSON.stringify({
-            where: { key: { remoteJid } },
-            limit: 100,
-          }),
-        })
-        const data = await evoRes.json()
-        console.log('findMessages response type:', typeof data, Array.isArray(data) ? data.length : '')
-        if (Array.isArray(data?.messages)) {
-          apiMessages = data.messages
-        } else if (Array.isArray(data)) {
-          apiMessages = data
-        }
-      } catch (e) {
-        console.error('findMessages error:', e)
-      }
+      const svcMsg = getServiceSupabase()
 
-      if (apiMessages.length > 0) {
-        const messages = apiMessages.map((msg: any) => {
-          const msgContent = msg.message || {}
-          const content = msgContent.conversation
-            || msgContent.extendedTextMessage?.text
-            || msgContent.imageMessage?.caption
-            || msgContent.videoMessage?.caption
-            || msgContent.documentMessage?.fileName
-            || null
-
-          const messageType = msgContent.conversation ? 'text'
-            : msgContent.extendedTextMessage ? 'text'
-            : msgContent.imageMessage ? 'image'
-            : msgContent.stickerMessage ? 'sticker'
-            : msgContent.audioMessage ? 'audio'
-            : msgContent.videoMessage ? 'video'
-            : msgContent.documentMessage ? 'document'
-            : 'other'
-
-          const displayContent = content || (messageType === 'image' ? '📷 Imagem'
-            : messageType === 'sticker' ? '🏷️ Figurinha'
-            : messageType === 'audio' ? '🎤 Áudio'
-            : messageType === 'video' ? '🎥 Vídeo'
-            : messageType === 'document' ? '📎 Documento'
-            : '[mídia]')
-
-          return {
-            id: msg.key?.id || msg.id || crypto.randomUUID(),
-            remote_jid: remoteJid,
-            direcao: msg.key?.fromMe ? 'out' : 'in',
-            conteudo: displayContent,
-            tipo: messageType,
-            timestamp: msg.messageTimestamp
-              ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
-              : msg.createdAt || new Date().toISOString(),
-            message_id: msg.key?.id || crypto.randomUUID(),
-          }
-        })
-
-        // Sort oldest first
-        messages.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-
-        // Persist messages to DB (fire and forget) so realtime and history work
-        const svcMsg = getServiceSupabase()
-        const toSave = messages.map((m: any) => ({
-          instancia_id: instance.id,
-          remote_jid: m.remote_jid,
-          direcao: m.direcao,
-          conteudo: m.conteudo,
-          tipo: m.tipo,
-          timestamp: m.timestamp,
-          message_id: m.message_id,
-        }))
-        svcMsg.from('whatsapp_mensagens')
-          .upsert(toSave, { onConflict: 'message_id', ignoreDuplicates: true })
-          .then(({ error }: any) => { if (error) console.error('Persist messages error:', error) })
-
-        return new Response(JSON.stringify({ messages }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      // Fallback: get from DB
-      const { data: dbMessages } = await supabase
+      // Step 1: Always load DB messages first (these are reliable now)
+      const { data: dbMessages } = await svcMsg
         .from('whatsapp_mensagens')
         .select('*')
         .eq('instancia_id', instance.id)
@@ -396,7 +314,129 @@ Deno.serve(async (req) => {
         .order('timestamp', { ascending: true })
         .limit(200)
 
-      return new Response(JSON.stringify({ messages: dbMessages || [] }), {
+      const existingIds = new Set((dbMessages || []).map((m: any) => m.message_id))
+
+      // Step 2: Try to get MORE messages from Evolution API (for history not yet in DB)
+      let apiMessages: any[] = []
+      try {
+        const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findMessages/${instance.instance_name}`, {
+          method: 'POST',
+          headers: evoHeaders(),
+          body: JSON.stringify({
+            where: { key: { remoteJid } },
+            limit: 200,
+          }),
+        })
+        const raw = await evoRes.text()
+        console.log('findMessages raw response (first 500):', raw.substring(0, 500))
+        
+        let data: any
+        try { data = JSON.parse(raw) } catch { data = null }
+        
+        if (data) {
+          // Handle all known response shapes
+          if (Array.isArray(data)) {
+            apiMessages = data
+          } else if (Array.isArray(data?.messages)) {
+            apiMessages = data.messages
+          } else if (Array.isArray(data?.records)) {
+            apiMessages = data.records
+          } else if (data && typeof data === 'object') {
+            const keys = Object.keys(data)
+            for (const key of keys) {
+              if (Array.isArray(data[key]) && data[key].length > 0) {
+                const first = data[key][0]
+                if (first?.key || first?.message || first?.messageTimestamp) {
+                  apiMessages = data[key]
+                  break
+                }
+              }
+            }
+            if (apiMessages.length === 0 && data.key) {
+              apiMessages = [data]
+            }
+          }
+        }
+        console.log('API messages parsed:', apiMessages.length)
+      } catch (e) {
+        console.error('findMessages error:', e)
+      }
+
+      // Step 3: Parse API messages and find new ones not in DB
+      const newMessages: any[] = []
+      for (const msg of apiMessages) {
+        const msgId = msg.key?.id || msg.id
+        if (!msgId || existingIds.has(msgId)) continue
+
+        const msgContent = msg.message || {}
+        const content = msgContent.conversation
+          || msgContent.extendedTextMessage?.text
+          || msgContent.imageMessage?.caption
+          || msgContent.videoMessage?.caption
+          || msgContent.documentMessage?.fileName
+          || null
+
+        const messageType = msgContent.conversation ? 'text'
+          : msgContent.extendedTextMessage ? 'text'
+          : msgContent.imageMessage ? 'image'
+          : msgContent.stickerMessage ? 'sticker'
+          : msgContent.audioMessage ? 'audio'
+          : msgContent.videoMessage ? 'video'
+          : msgContent.documentMessage ? 'document'
+          : 'other'
+
+        const displayContent = content || (messageType === 'image' ? '📷 Imagem'
+          : messageType === 'sticker' ? '🏷️ Figurinha'
+          : messageType === 'audio' ? '🎤 Áudio'
+          : messageType === 'video' ? '🎥 Vídeo'
+          : messageType === 'document' ? '📎 Documento'
+          : '[mídia]')
+
+        newMessages.push({
+          instancia_id: instance.id,
+          remote_jid: remoteJid,
+          direcao: msg.key?.fromMe ? 'out' : 'in',
+          conteudo: displayContent,
+          tipo: messageType,
+          timestamp: msg.messageTimestamp
+            ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
+            : msg.createdAt || new Date().toISOString(),
+          message_id: msgId,
+        })
+      }
+
+      // Step 4: Persist new API messages to DB (fire and forget)
+      if (newMessages.length > 0) {
+        console.log('Persisting', newMessages.length, 'new messages from API')
+        svcMsg.from('whatsapp_mensagens')
+          .upsert(newMessages, { onConflict: 'message_id', ignoreDuplicates: true })
+          .then(({ error }: any) => { if (error) console.error('Persist error:', error) })
+      }
+
+      // Step 5: Combine DB + new API messages, sort by timestamp
+      const allMessages = [
+        ...(dbMessages || []).map((m: any) => ({
+          id: m.id,
+          remote_jid: m.remote_jid,
+          direcao: m.direcao,
+          conteudo: m.conteudo,
+          tipo: m.tipo,
+          timestamp: m.timestamp,
+          message_id: m.message_id,
+        })),
+        ...newMessages.map((m: any) => ({
+          id: m.message_id,
+          remote_jid: m.remote_jid,
+          direcao: m.direcao,
+          conteudo: m.conteudo,
+          tipo: m.tipo,
+          timestamp: m.timestamp,
+          message_id: m.message_id,
+        })),
+      ]
+      allMessages.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+      return new Response(JSON.stringify({ messages: allMessages }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
