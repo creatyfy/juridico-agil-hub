@@ -57,11 +57,6 @@ export function useWhatsApp() {
   const [loading, setLoading] = useState(false);
   const selectedChatRef = useRef<string | null>(null);
 
-  // Keep ref in sync
-  useEffect(() => {
-    selectedChatRef.current = selectedChat;
-  }, [selectedChat]);
-
   const checkStatus = useCallback(async () => {
     try {
       const res = await callEvolution('status');
@@ -138,6 +133,7 @@ export function useWhatsApp() {
 
   const loadMessages = useCallback(async (remoteJid: string) => {
     setSelectedChat(remoteJid);
+    selectedChatRef.current = remoteJid;
     try {
       const res = await callEvolution('fetch-messages', { remoteJid });
       if (res.messages && res.messages.length > 0) {
