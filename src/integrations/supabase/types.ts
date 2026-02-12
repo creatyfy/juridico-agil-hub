@@ -104,8 +104,10 @@ export type Database = {
           endereco: string | null
           id: string
           nome: string
+          numero_whatsapp: string | null
           observacoes: string | null
           status: string | null
+          status_vinculo: string | null
           telefone: string | null
           tipo_documento: string | null
           tipo_pessoa: string | null
@@ -120,8 +122,10 @@ export type Database = {
           endereco?: string | null
           id?: string
           nome: string
+          numero_whatsapp?: string | null
           observacoes?: string | null
           status?: string | null
+          status_vinculo?: string | null
           telefone?: string | null
           tipo_documento?: string | null
           tipo_pessoa?: string | null
@@ -136,8 +140,10 @@ export type Database = {
           endereco?: string | null
           id?: string
           nome?: string
+          numero_whatsapp?: string | null
           observacoes?: string | null
           status?: string | null
+          status_vinculo?: string | null
           telefone?: string | null
           tipo_documento?: string | null
           tipo_pessoa?: string | null
@@ -145,6 +151,60 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      convites_vinculacao: {
+        Row: {
+          advogado_user_id: string
+          cliente_id: string
+          created_at: string
+          data_aceite: string | null
+          expiracao: string
+          id: string
+          ip_aceite: string | null
+          processo_id: string
+          status: string
+          token: string
+        }
+        Insert: {
+          advogado_user_id: string
+          cliente_id: string
+          created_at?: string
+          data_aceite?: string | null
+          expiracao?: string
+          id?: string
+          ip_aceite?: string | null
+          processo_id: string
+          status?: string
+          token?: string
+        }
+        Update: {
+          advogado_user_id?: string
+          cliente_id?: string
+          created_at?: string
+          data_aceite?: string | null
+          expiracao?: string
+          id?: string
+          ip_aceite?: string | null
+          processo_id?: string
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "convites_vinculacao_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "convites_vinculacao_processo_id_fkey"
+            columns: ["processo_id"]
+            isOneToOne: false
+            referencedRelation: "processos"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       email_verification_codes: {
         Row: {
@@ -338,6 +398,57 @@ export type Database = {
           vara?: string | null
         }
         Relationships: []
+      }
+      validacoes_otp: {
+        Row: {
+          cliente_id: string
+          codigo_otp: string
+          convite_id: string
+          created_at: string
+          expiracao: string
+          id: string
+          numero_informado: string
+          tentativas: number
+          validado: boolean
+        }
+        Insert: {
+          cliente_id: string
+          codigo_otp: string
+          convite_id: string
+          created_at?: string
+          expiracao?: string
+          id?: string
+          numero_informado: string
+          tentativas?: number
+          validado?: boolean
+        }
+        Update: {
+          cliente_id?: string
+          codigo_otp?: string
+          convite_id?: string
+          created_at?: string
+          expiracao?: string
+          id?: string
+          numero_informado?: string
+          tentativas?: number
+          validado?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "validacoes_otp_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "validacoes_otp_convite_id_fkey"
+            columns: ["convite_id"]
+            isOneToOne: false
+            referencedRelation: "convites_vinculacao"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       whatsapp_chats_cache: {
         Row: {
