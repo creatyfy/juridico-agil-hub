@@ -73,8 +73,19 @@ export default function Login() {
         body: { action: 'lookup', oab, uf },
       });
 
-      if (fnError || data?.error) {
-        setError(data?.error || 'OAB não encontrada. Verifique os dados ou cadastre-se.');
+      if (fnError) {
+        // Extract message from FunctionsHttpError response
+        let msg = 'OAB não encontrada. Verifique os dados ou cadastre-se.';
+        try {
+          const ctx = await (fnError as any).context?.json?.();
+          if (ctx?.error) msg = ctx.error;
+        } catch {}
+        setError(msg);
+        return;
+      }
+
+      if (data?.error) {
+        setError(data.error);
         return;
       }
 
