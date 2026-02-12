@@ -10,6 +10,8 @@ export default function AdvogadoDashboard() {
   const { user } = useAuth();
   const { processos, loading } = useProcessos();
   const [recentMovs, setRecentMovs] = useState(0);
+  const [totalClientes, setTotalClientes] = useState(0);
+  const [clientesAtivos, setClientesAtivos] = useState(0);
 
   useEffect(() => {
     async function fetchRecentMovs() {
@@ -28,6 +30,23 @@ export default function AdvogadoDashboard() {
     }
     fetchRecentMovs();
   }, [processos]);
+
+  useEffect(() => {
+    async function fetchClientes() {
+      const { count: total } = await supabase
+        .from('clientes')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: ativos } = await supabase
+        .from('clientes')
+        .select('*', { count: 'exact', head: true })
+        .not('auth_user_id', 'is', null);
+
+      setTotalClientes(total || 0);
+      setClientesAtivos(ativos || 0);
+    }
+    fetchClientes();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -51,7 +70,7 @@ export default function AdvogadoDashboard() {
           icon={<TrendingUp className="h-5 w-5" />}
         />
         <StatsCard title="Alertas" value={0} subtitle="Nenhum alerta" icon={<AlertTriangle className="h-5 w-5" />} />
-        <StatsCard title="Clientes" value={0} subtitle="Em breve" icon={<Users className="h-5 w-5" />} />
+        <StatsCard title="Clientes" value={totalClientes} subtitle={`${clientesAtivos} ativo(s) no sistema`} icon={<Users className="h-5 w-5" />} />
       </div>
 
       <div className="grid lg:grid-cols-5 gap-6">
