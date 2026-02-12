@@ -1,117 +1,80 @@
 
 
-# Integrar WhatsApp via Evolution API na pagina de Atendimento
+## Diagnostico
 
-## Visao Geral
+Existem **dois problemas criticos** impedindo o funcionamento correto:
 
-A pagina de Atendimento sera transformada em uma central de WhatsApp completa, conectando-se a uma instancia da **Evolution API** (hospedada por voce externamente). O fluxo sera: configurar a URL da API, escanear o QR Code, e entao enviar/receber mensagens diretamente pelo sistema.
+### Problema 1: Mensagens nao salvam no banco (causa raiz principal)
 
-## Pre-requisitos
+O indice unico na coluna `message_id` da tabela `whatsapp_mensagens` foi criado como **indice parcial** (`WHERE message_id IS NOT NULL`). O PostgreSQL **nao suporta** `ON CONFLICT` com indices parciais. Por isso, **100% dos upserts do webhook falham** com o erro:
 
-Voce precisara ter uma instancia da **Evolution API** rodando em um servidor proprio (VPS, Docker, etc). A Evolution API e gratuita e open-source: [github.com/EvolutionAPI/evolution-api](https://github.com/EvolutionAPI/evolution-api).
+```
+"there is no unique or exclusion constraint matching the ON CONFLICT specification"
+```
 
-Apos instalar, voce tera:
-- Uma **URL base** (ex: `https://sua-evolution.com`)
-- Uma **API Key** para autenticacao
+Consequencias:
+- Nenhuma mensagem e salva no banco de dados
+- O Realtime nunca dispara (pois nao ha INSERTs)
+- Mensagens enviadas/recebidas nao aparecem em tempo real
+- Historico de conversas fica vazio (o fallback ao banco nao encontra nada)
 
-Esses dados serao armazenados de forma segura no backend do Lovable Cloud.
+### Problema 2: Nomes dos contatos
 
-## Etapas da Implementacao
+Os endpoints da Evolution API (`findContacts`, `contact/find`) retornam 0 contatos ou erro. Os nomes vem apenas de:
+- `pushName` do objeto de chat (nome de perfil do WhatsApp, nao o nome salvo na agenda)
+- Banco de dados local (apenas 2-120 registros salvos)
 
-### 1. Armazenar credenciais da Evolution API
-- Solicitar ao usuario a **URL** e **API Key** da Evolution API
-- Armazena-las como secrets seguros no backend
+Muitos contatos aparecem apenas como numero de telefone.
 
-### 2. Criar edge functions de integracao
-- **`evolution-whatsapp`**: Edge function que faz proxy das chamadas para a Evolution API:
-  - `POST /connect` - Cria instancia e retorna QR Code
-  - `GET /status` - Verifica status da conexao
-  - `GET /qrcode` - Busca QR Code atualizado
-  - `POST /send` - Envia mensagem de texto
-  - `GET /messages` - Busca historico de mensagens
-  - `POST /disconnect` - Desconecta a instancia
+---
 
-### 3. Tabelas no banco de dados
-- **`whatsapp_instancias`**: Armazena dados da instancia conectada por advogado (user_id, instance_name, status, phone_number)
-- **`whatsapp_mensagens`**: Historico de mensagens (instancia_id, contato, direcao, conteudo, timestamp)
-- **`whatsapp_contatos`**: Contatos do WhatsApp (nome, numero, foto)
-- RLS para garantir que cada advogado ve apenas suas proprias conversas
+## Plano de Correcao
 
-### 4. Webhook para receber mensagens
-- **`evolution-webhook`**: Edge function que recebe webhooks da Evolution API quando chegam novas mensagens
-- Salva a mensagem na tabela `whatsapp_mensagens`
-- Cria notificacao na tabela `notificacoes` para o advogado
-- Realtime habilitado nas tabelas para atualizacao instantanea
+### Passo 1: Corrigir o indice unico (migracao SQL)
 
-### 5. Interface da pagina de Atendimento
-A pagina tera 3 estados:
+- Remover o indice parcial atual `whatsapp_mensagens_message_id_unique`
+- Criar um **UNIQUE CONSTRAINT real** na coluna `message_id` (sem clausula WHERE)
+- Para lidar com valores NULL duplicados, definir um valor default usando `gen_random_uuid()` para linhas existentes sem `message_id`
 
-**Estado 1 - Nao configurado**: Botao para ir em Configuracoes e inserir URL/API Key da Evolution API
+```sql
+-- Remove partial index
+DROP INDEX IF EXISTS whatsapp_mensagens_message_id_unique;
 
-**Estado 2 - Configurado, nao conectado**: Exibe QR Code para escanear com WhatsApp. Atualiza automaticamente a cada 30s. Mostra instrucoes passo a passo.
+-- Fill NULL message_ids with unique values
+UPDATE whatsapp_mensagens SET message_id = gen_random_uuid()::text WHERE message_id IS NULL;
 
-**Estado 3 - Conectado**: Layout estilo chat com:
-- **Painel esquerdo**: Lista de conversas com busca, ordenadas por ultima mensagem
-- **Painel direito**: Chat aberto com historico de mensagens, campo de envio de texto
-- Indicador de status da conexao (online/offline)
-- Botao para desconectar
+-- Make column NOT NULL with default
+ALTER TABLE whatsapp_mensagens ALTER COLUMN message_id SET DEFAULT gen_random_uuid()::text;
+ALTER TABLE whatsapp_mensagens ALTER COLUMN message_id SET NOT NULL;
 
-### 6. Pagina de Configuracoes
-- Nova secao "WhatsApp / Evolution API" com campos para URL e API Key
-- Botao para testar conexao
-- Status da instancia atual
+-- Create proper unique constraint
+ALTER TABLE whatsapp_mensagens ADD CONSTRAINT whatsapp_mensagens_message_id_key UNIQUE (message_id);
+```
+
+### Passo 2: Melhorar resolucao de nomes dos contatos
+
+Atualizar a edge function `evolution-whatsapp` no `fetch-chats`:
+
+- Extrair `pushName` de **todas** as mensagens nos chats, nao apenas do `lastMessage`
+- Usar `notify` field do chat quando disponivel
+- Cachear nomes resolvidos no banco para uso futuro
+- Quando o contato so tem numero, formatar como "+55 (XX) XXXXX-XXXX" para melhor legibilidade
+
+### Passo 3: Salvar nomes recebidos via webhook
+
+Atualizar `evolution-webhook` para salvar o `pushName` em cada mensagem recebida na tabela `whatsapp_contatos`, garantindo que nomes se acumulem ao longo do tempo.
 
 ---
 
 ## Detalhes Tecnicos
 
-### Edge Function: `evolution-whatsapp`
-```
-Endpoints proxied:
-- POST /api/v1/instance/create
-- GET  /api/v1/instance/connectionState/{instance}
-- GET  /api/v1/instance/fetchInstances
-- POST /api/v1/message/sendText/{instance}
-- POST /api/v1/chat/findMessages/{instance}
-```
+### Arquivos modificados:
+1. **Nova migracao SQL** - corrigir constraint do `message_id`
+2. **`supabase/functions/evolution-whatsapp/index.ts`** - melhorar resolucao de nomes no `fetch-chats`
+3. **`supabase/functions/evolution-webhook/index.ts`** - ja salva pushName (funcionara apos correcao do indice)
 
-### Tabelas (migracao SQL)
-```text
-whatsapp_instancias
-+------------------+-------------------+
-| user_id (UUID)   | FK auth.users     |
-| instance_name    | TEXT              |
-| instance_id      | TEXT              |
-| status           | TEXT              |
-| phone_number     | TEXT              |
-| created_at       | TIMESTAMPTZ       |
-+------------------+-------------------+
-
-whatsapp_mensagens
-+------------------+-------------------+
-| instancia_id     | FK instancias     |
-| remote_jid       | TEXT (contato)    |
-| direcao          | TEXT (in/out)     |
-| conteudo         | TEXT              |
-| tipo             | TEXT              |
-| timestamp        | TIMESTAMPTZ       |
-| message_id       | TEXT              |
-+------------------+-------------------+
-```
-
-### Realtime
-Habilitado em `whatsapp_mensagens` para atualizacao em tempo real do chat.
-
-### Webhook
-A Evolution API sera configurada para enviar eventos para:
-`https://<project-id>.supabase.co/functions/v1/evolution-webhook`
-
-### Arquivos que serao criados/editados
-- `supabase/functions/evolution-whatsapp/index.ts` (novo)
-- `supabase/functions/evolution-webhook/index.ts` (novo)
-- `src/pages/atendimento/Atendimento.tsx` (reescrito)
-- `src/hooks/useWhatsApp.ts` (novo)
-- `src/pages/configuracoes/Configuracoes.tsx` (editado - secao Evolution API)
-- Migracao SQL para novas tabelas
-- `supabase/config.toml` atualizado com as novas functions
-
+### Resultado esperado:
+- Webhook passa a salvar mensagens com sucesso
+- Realtime funciona e mensagens aparecem instantaneamente
+- Historico de conversas fica disponivel
+- Nomes dos contatos melhoram progressivamente conforme mensagens chegam
