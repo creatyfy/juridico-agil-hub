@@ -15,6 +15,8 @@ Deno.serve(async (req) => {
     const event = body.event
     const instanceName = body.instance
 
+    console.log('Webhook event:', event, 'instance:', instanceName)
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -35,7 +37,7 @@ Deno.serve(async (req) => {
     }
 
     // Handle connection update
-    if (event === 'connection.update') {
+    if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
       const state = body.data?.state
       const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
       
@@ -48,44 +50,78 @@ Deno.serve(async (req) => {
         .eq('id', instance.id)
     }
 
-    // Handle incoming messages
-    if (event === 'messages.upsert') {
-      const messages = body.data || []
+    // Handle incoming messages - Evolution API v2 format
+    if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
+      // v2 sends data as array or single object, normalize
+      let messages: any[] = []
+      const data = body.data
+      
+      if (Array.isArray(data)) {
+        messages = data
+      } else if (data && typeof data === 'object') {
+        // v2 may wrap in { messages: [...] } or send a single message
+        if (Array.isArray(data.messages)) {
+          messages = data.messages
+        } else if (data.key) {
+          // Single message object
+          messages = [data]
+        }
+      }
+
+      console.log('Processing', messages.length, 'messages')
       
       for (const msg of messages) {
-        if (!msg.key || !msg.message) continue
+        if (!msg.key) continue
         
         const isFromMe = msg.key.fromMe || false
         const remoteJid = msg.key.remoteJid
         if (!remoteJid || remoteJid === 'status@broadcast') continue
 
-        const content = msg.message?.conversation
-          || msg.message?.extendedTextMessage?.text
-          || msg.message?.imageMessage?.caption
-          || '[mídia]'
+        const msgContent = msg.message || {}
+        const content = msgContent.conversation
+          || msgContent.extendedTextMessage?.text
+          || msgContent.imageMessage?.caption
+          || msgContent.videoMessage?.caption
+          || msgContent.documentMessage?.fileName
+          || null
 
-        const messageType = msg.message?.conversation ? 'text'
-          : msg.message?.extendedTextMessage ? 'text'
-          : msg.message?.imageMessage ? 'image'
-          : msg.message?.audioMessage ? 'audio'
-          : msg.message?.videoMessage ? 'video'
-          : msg.message?.documentMessage ? 'document'
+        const messageType = msgContent.conversation ? 'text'
+          : msgContent.extendedTextMessage ? 'text'
+          : msgContent.imageMessage ? 'image'
+          : msgContent.stickerMessage ? 'sticker'
+          : msgContent.audioMessage ? 'audio'
+          : msgContent.videoMessage ? 'video'
+          : msgContent.documentMessage ? 'document'
+          : msgContent.contactMessage ? 'contact'
+          : msgContent.locationMessage ? 'location'
           : 'other'
 
+        // Display text for non-text types
+        const displayContent = content || (messageType === 'image' ? '📷 Imagem'
+          : messageType === 'sticker' ? '🏷️ Figurinha'
+          : messageType === 'audio' ? '🎤 Áudio'
+          : messageType === 'video' ? '🎥 Vídeo'
+          : messageType === 'document' ? '📎 Documento'
+          : messageType === 'contact' ? '👤 Contato'
+          : messageType === 'location' ? '📍 Localização'
+          : '[mídia]')
+
         // Upsert message (avoid duplicates)
-        await supabase
+        const { error: msgError } = await supabase
           .from('whatsapp_mensagens')
           .upsert({
             instancia_id: instance.id,
             remote_jid: remoteJid,
             direcao: isFromMe ? 'out' : 'in',
-            conteudo: content,
+            conteudo: displayContent,
             tipo: messageType,
             message_id: msg.key.id,
             timestamp: msg.messageTimestamp
               ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
               : new Date().toISOString(),
           }, { onConflict: 'message_id', ignoreDuplicates: true })
+
+        if (msgError) console.error('Message upsert error:', msgError)
 
         // Upsert contact
         const pushName = msg.pushName || null
@@ -100,13 +136,13 @@ Deno.serve(async (req) => {
             }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
         }
 
-        // Create notification for incoming messages
-        if (!isFromMe) {
+        // Create notification for incoming messages (limit to avoid spam)
+        if (!isFromMe && messageType !== 'other') {
           await supabase.from('notificacoes').insert({
             user_id: instance.user_id,
             tipo: 'whatsapp',
             titulo: `Nova mensagem de ${pushName || remoteJid.replace('@s.whatsapp.net', '')}`,
-            mensagem: content.substring(0, 100),
+            mensagem: displayContent.substring(0, 100),
             link: '/atendimento',
           })
         }
@@ -118,8 +154,7 @@ Deno.serve(async (req) => {
     })
   } catch (err) {
     console.error('Webhook error:', err)
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
+    return new Response(JSON.stringify({ ok: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
