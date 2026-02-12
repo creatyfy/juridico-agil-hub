@@ -4,14 +4,16 @@ import { useAuth } from '@/contexts/AuthContext';
 
 export type ConnectionStatus = 'not_configured' | 'disconnected' | 'connecting' | 'connected' | 'loading';
 
-export interface Conversation {
+export interface ChatItem {
   remote_jid: string;
   nome: string;
   numero: string;
   foto_url: string | null;
-  last_message: string;
-  last_timestamp: string;
+  ultima_mensagem: string;
+  ultimo_timestamp: string;
   direcao: string;
+  nao_lidas: number;
+  is_group: boolean;
 }
 
 export interface Message {
@@ -32,9 +34,7 @@ function callEvolution(action: string, params?: Record<string, string>, body?: a
   }
 
   return supabase.auth.getSession().then(({ data: { session } }) => {
-    if (!session?.access_token) {
-      return Promise.reject(new Error('No active session'));
-    }
+    if (!session?.access_token) return Promise.reject(new Error('No active session'));
     return fetch(url.toString(), {
       method: body ? 'POST' : 'GET',
       headers: {
@@ -51,11 +51,13 @@ export function useWhatsApp() {
   const { user } = useAuth();
   const [status, setStatus] = useState<ConnectionStatus>('loading');
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [chats, setChats] = useState<ChatItem[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const selectedChatRef = useRef<string | null>(null);
+  const syncedRef = useRef(false);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -79,11 +81,8 @@ export function useWhatsApp() {
     setLoading(true);
     try {
       const res = await callEvolution('connect', undefined, {});
-      if (res.qrcode?.base64) {
-        setQrCode(res.qrcode.base64);
-      } else if (res.qrcode?.code) {
-        setQrCode(res.qrcode.code);
-      }
+      if (res.qrcode?.base64) setQrCode(res.qrcode.base64);
+      else if (res.qrcode?.code) setQrCode(res.qrcode.code);
       setStatus('connecting');
     } finally {
       setLoading(false);
@@ -93,14 +92,9 @@ export function useWhatsApp() {
   const refreshQrCode = useCallback(async () => {
     try {
       const res = await callEvolution('qrcode');
-      if (res.qrcode) {
-        setQrCode(res.qrcode);
-      } else if (res.code) {
-        setQrCode(res.code);
-      }
-    } catch (e) {
-      console.error('QR refresh error:', e);
-    }
+      if (res.qrcode) setQrCode(res.qrcode);
+      else if (res.code) setQrCode(res.code);
+    } catch (e) { console.error('QR refresh error:', e); }
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -109,26 +103,53 @@ export function useWhatsApp() {
       await callEvolution('disconnect', undefined, {});
       setStatus('disconnected');
       setQrCode(null);
-      setConversations([]);
+      setChats([]);
       setMessages([]);
       setSelectedChat(null);
+      syncedRef.current = false;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const loadConversations = useCallback(async () => {
+  // Full sync: contacts + chats + photos (once per session)
+  const runFullSync = useCallback(async () => {
+    if (syncedRef.current) return;
+    setSyncing(true);
     try {
-      const res = await callEvolution('fetch-chats', undefined, {});
-      if (res.conversations && res.conversations.length > 0) {
-        setConversations(res.conversations);
-        return;
-      }
+      const res = await callEvolution('full-sync', undefined, {});
+      console.log('Full sync result:', res);
+      syncedRef.current = true;
     } catch (e) {
-      console.error('fetch-chats error:', e);
+      console.error('Full sync error:', e);
+    } finally {
+      setSyncing(false);
     }
-    const res = await callEvolution('conversations');
-    setConversations(res.conversations || []);
+  }, []);
+
+  // Load chats from cache table
+  const loadChats = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('whatsapp_chats_cache')
+      .select('*')
+      .order('ultimo_timestamp', { ascending: false });
+
+    if (error) {
+      console.error('Load chats error:', error);
+      return;
+    }
+
+    setChats((data || []).map((c: any) => ({
+      remote_jid: c.remote_jid,
+      nome: c.nome || c.remote_jid.replace('@s.whatsapp.net', ''),
+      numero: c.remote_jid.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@lid', ''),
+      foto_url: c.foto_url,
+      ultima_mensagem: c.ultima_mensagem || '',
+      ultimo_timestamp: c.ultimo_timestamp || c.updated_at,
+      direcao: c.direcao || 'in',
+      nao_lidas: c.nao_lidas || 0,
+      is_group: c.is_group || false,
+    })));
   }, []);
 
   const loadMessages = useCallback(async (remoteJid: string) => {
@@ -136,19 +157,17 @@ export function useWhatsApp() {
     selectedChatRef.current = remoteJid;
     try {
       const res = await callEvolution('fetch-messages', { remoteJid });
-      if (res.messages && res.messages.length > 0) {
-        setMessages(res.messages);
-        return;
-      }
+      setMessages(res.messages || []);
+      // Update local unread count
+      setChats(prev => prev.map(c =>
+        c.remote_jid === remoteJid ? { ...c, nao_lidas: 0 } : c
+      ));
     } catch (e) {
-      console.error('fetch-messages error:', e);
+      console.error('Load messages error:', e);
     }
-    const res = await callEvolution('messages', { remoteJid });
-    setMessages(res.messages || []);
   }, []);
 
   const sendMessage = useCallback(async (number: string, text: string) => {
-    // Optimistically add the message to the UI
     const optimisticMsg: Message = {
       id: crypto.randomUUID(),
       remote_jid: number,
@@ -160,6 +179,17 @@ export function useWhatsApp() {
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
+    // Update chat list immediately
+    setChats(prev => {
+      const updated = prev.map(c =>
+        c.remote_jid === number
+          ? { ...c, ultima_mensagem: text, ultimo_timestamp: new Date().toISOString(), direcao: 'out' }
+          : c
+      );
+      updated.sort((a, b) => new Date(b.ultimo_timestamp).getTime() - new Date(a.ultimo_timestamp).getTime());
+      return updated;
+    });
+
     try {
       await callEvolution('send', undefined, { number, text });
     } catch (e) {
@@ -169,9 +199,7 @@ export function useWhatsApp() {
 
   // Check status on mount
   useEffect(() => {
-    if (user) {
-      checkStatus();
-    }
+    if (user) checkStatus();
   }, [user, checkStatus]);
 
   // Poll status while connecting
@@ -184,56 +212,40 @@ export function useWhatsApp() {
     return () => clearInterval(interval);
   }, [status, checkStatus, refreshQrCode]);
 
-  // Load conversations when connected
+  // Run full sync when connected, then load chats
   useEffect(() => {
     if (status === 'connected') {
-      loadConversations();
+      runFullSync().then(() => loadChats());
     }
-  }, [status, loadConversations]);
+  }, [status, runFullSync, loadChats]);
 
-  // Realtime subscription for new messages - uses ref to avoid re-subscribing on chat change
+  // Realtime: listen to chats cache changes + new messages
   useEffect(() => {
     if (status !== 'connected') return;
 
     const channel = supabase
-      .channel('whatsapp-realtime')
+      .channel('whatsapp-realtime-v2')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'whatsapp_chats_cache',
+      }, () => {
+        // Reload chats on any change
+        loadChats();
+      })
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'whatsapp_mensagens',
       }, (payload) => {
         const newMsg = payload.new as any;
-        
-        // Update conversation list with the new message
-        setConversations(prev => {
-          const idx = prev.findIndex(c => c.remote_jid === newMsg.remote_jid);
-          if (idx >= 0) {
-            const updated = [...prev];
-            updated[idx] = {
-              ...updated[idx],
-              last_message: newMsg.conteudo || '[mídia]',
-              last_timestamp: newMsg.timestamp,
-              direcao: newMsg.direcao,
-            };
-            // Re-sort by timestamp
-            updated.sort((a, b) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime());
-            return updated;
-          }
-          return prev;
-        });
-
-        // If this message belongs to the currently open chat, add it to messages
         const currentChat = selectedChatRef.current;
         if (currentChat && newMsg.remote_jid === currentChat) {
           setMessages(prev => {
-            // Avoid duplicates by message_id
-            if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) {
-              return prev;
-            }
-            // Also avoid duplicates for optimistic messages (same content + direction within 10s)
+            if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) return prev;
             if (newMsg.direcao === 'out') {
-              const recent = prev.filter(m => 
-                m.direcao === 'out' && 
+              const recent = prev.filter(m =>
+                m.direcao === 'out' &&
                 m.conteudo === newMsg.conteudo &&
                 Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 10000
               );
@@ -254,22 +266,10 @@ export function useWhatsApp() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [status]);
+  }, [status, loadChats]);
 
   return {
-    status,
-    qrCode,
-    conversations,
-    messages,
-    selectedChat,
-    loading,
-    connect,
-    disconnect,
-    refreshQrCode,
-    loadConversations,
-    loadMessages,
-    sendMessage,
-    checkStatus,
-    setSelectedChat,
+    status, qrCode, chats, messages, selectedChat, loading, syncing,
+    connect, disconnect, refreshQrCode, loadChats, loadMessages, sendMessage, checkStatus, setSelectedChat,
   };
 }

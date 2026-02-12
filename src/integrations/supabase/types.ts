@@ -339,6 +339,59 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_chats_cache: {
+        Row: {
+          created_at: string
+          direcao: string | null
+          foto_url: string | null
+          id: string
+          instancia_id: string
+          is_group: boolean | null
+          nao_lidas: number | null
+          nome: string | null
+          remote_jid: string
+          ultima_mensagem: string | null
+          ultimo_timestamp: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          direcao?: string | null
+          foto_url?: string | null
+          id?: string
+          instancia_id: string
+          is_group?: boolean | null
+          nao_lidas?: number | null
+          nome?: string | null
+          remote_jid: string
+          ultima_mensagem?: string | null
+          ultimo_timestamp?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          direcao?: string | null
+          foto_url?: string | null
+          id?: string
+          instancia_id?: string
+          is_group?: boolean | null
+          nao_lidas?: number | null
+          nome?: string | null
+          remote_jid?: string
+          ultima_mensagem?: string | null
+          ultimo_timestamp?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_chats_cache_instancia_id_fkey"
+            columns: ["instancia_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_contatos: {
         Row: {
           created_at: string
@@ -347,8 +400,10 @@ export type Database = {
           instancia_id: string
           nome: string | null
           numero: string | null
+          push_name: string | null
           remote_jid: string
           updated_at: string
+          verified_name: string | null
         }
         Insert: {
           created_at?: string
@@ -357,8 +412,10 @@ export type Database = {
           instancia_id: string
           nome?: string | null
           numero?: string | null
+          push_name?: string | null
           remote_jid: string
           updated_at?: string
+          verified_name?: string | null
         }
         Update: {
           created_at?: string
@@ -367,8 +424,10 @@ export type Database = {
           instancia_id?: string
           nome?: string | null
           numero?: string | null
+          push_name?: string | null
           remote_jid?: string
           updated_at?: string
+          verified_name?: string | null
         }
         Relationships: [
           {

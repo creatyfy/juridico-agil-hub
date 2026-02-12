@@ -9,10 +9,7 @@ const EVOLUTION_API_URL = Deno.env.get('EVOLUTION_API_URL')!
 const EVOLUTION_API_KEY = Deno.env.get('EVOLUTION_API_KEY')!
 
 function evoHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'apikey': EVOLUTION_API_KEY,
-  }
+  return { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY }
 }
 
 async function getUser(req: Request) {
@@ -27,10 +24,15 @@ async function getUser(req: Request) {
 }
 
 function getServiceSupabase() {
-  return createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+}
+
+// Format BR phone number for display
+function formatPhone(raw: string): string {
+  if (raw.length >= 12 && raw.startsWith('55')) {
+    return `+${raw.substring(0, 2)} (${raw.substring(2, 4)}) ${raw.substring(4, raw.length - 4)}-${raw.substring(raw.length - 4)}`
+  }
+  return raw
 }
 
 Deno.serve(async (req) => {
@@ -54,6 +56,208 @@ Deno.serve(async (req) => {
       return data
     }
 
+    // ─── FULL SYNC ───
+    // Called once per session after connection. Syncs contacts, chats, photos.
+    if (action === 'full-sync') {
+      const instance = await getUserInstance()
+      if (!instance) {
+        return new Response(JSON.stringify({ ok: false, error: 'No instance' }), {
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      const svc = getServiceSupabase()
+      const instanceName = instance.instance_name
+      const instanceId = instance.id
+
+      // ── Step 1: Fetch contacts from Evolution API ──
+      let apiContacts: any[] = []
+      try {
+        const res = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instanceName}`, {
+          method: 'POST', headers: evoHeaders(), body: JSON.stringify({}),
+        })
+        const data = await res.json()
+        apiContacts = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : []
+        console.log('findContacts:', apiContacts.length)
+      } catch (e) { console.error('findContacts error:', e) }
+
+      // ── Step 2: Fetch chats from Evolution API ──
+      let apiChats: any[] = []
+      try {
+        const res = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instanceName}`, {
+          method: 'POST', headers: evoHeaders(), body: JSON.stringify({}),
+        })
+        const data = await res.json()
+        apiChats = Array.isArray(data) ? data : []
+        console.log('findChats:', apiChats.length)
+      } catch (e) { console.error('findChats error:', e) }
+
+      // ── Step 3: Build contacts map ──
+      // Priority: DB client name > verifiedName > pushName > number
+      const contactsMap = new Map<string, { name: string | null; pushName: string | null; verifiedName: string | null; foto: string | null }>()
+
+      // From API contacts
+      for (const c of apiContacts) {
+        const jid = c.remoteJid || c.id
+        if (!jid || jid === 'status@broadcast') continue
+        contactsMap.set(jid, {
+          name: c.name || c.formattedName || null,
+          pushName: c.pushName || null,
+          verifiedName: c.verifiedName || c.verifiedBizName || null,
+          foto: c.profilePictureUrl || null,
+        })
+      }
+
+      // Enrich from chat objects
+      for (const c of apiChats) {
+        const jid = c.remoteJid || c.id
+        if (!jid || jid === 'status@broadcast') continue
+        const existing = contactsMap.get(jid)
+        const pushName = c.pushName || c.notify || c.notifyName || c.lastMessage?.pushName
+        const subject = c.subject || c.groupMetadata?.subject
+        const chatName = c.name || c.formattedName
+        if (!existing) {
+          contactsMap.set(jid, {
+            name: chatName || subject || null,
+            pushName: pushName || null,
+            verifiedName: null,
+            foto: c.profilePicUrl || c.profilePictureUrl || null,
+          })
+        } else {
+          if (!existing.pushName && pushName) existing.pushName = pushName
+          if (!existing.name && (chatName || subject)) existing.name = chatName || subject || null
+          if (!existing.foto && (c.profilePicUrl || c.profilePictureUrl)) existing.foto = c.profilePicUrl || c.profilePictureUrl
+        }
+      }
+
+      // ── Step 4: Fetch profile pictures for contacts without photos (batch, max 40) ──
+      const jidsNeedPic = Array.from(contactsMap.entries())
+        .filter(([jid, c]) => !c.foto && jid !== 'status@broadcast')
+        .map(([jid]) => jid)
+        .slice(0, 40)
+
+      console.log('Fetching profile pics for:', jidsNeedPic.length)
+      for (let i = 0; i < jidsNeedPic.length; i += 10) {
+        const batch = jidsNeedPic.slice(i, i + 10)
+        await Promise.all(batch.map(async (jid) => {
+          try {
+            const res = await fetch(`${EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instanceName}`, {
+              method: 'POST', headers: evoHeaders(),
+              body: JSON.stringify({ number: jid }),
+            })
+            const data = await res.json()
+            const picUrl = data?.profilePictureUrl || data?.picture || data?.imgUrl
+            if (picUrl) {
+              const c = contactsMap.get(jid)
+              if (c) c.foto = picUrl
+            }
+          } catch (_) {}
+        }))
+      }
+
+      // ── Step 5: Persist contacts to DB ──
+      const contactsToSave = Array.from(contactsMap.entries())
+        .filter(([jid]) => !jid.includes('@g.us') && jid !== 'status@broadcast')
+        .map(([jid, c]) => ({
+          instancia_id: instanceId,
+          remote_jid: jid,
+          nome: c.name || c.verifiedName || c.pushName || null,
+          push_name: c.pushName || null,
+          verified_name: c.verifiedName || null,
+          numero: jid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+          foto_url: c.foto || null,
+        }))
+
+      if (contactsToSave.length > 0) {
+        const { error } = await svc.from('whatsapp_contatos')
+          .upsert(contactsToSave, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+        if (error) console.error('Contacts upsert error:', error)
+        else console.log('Contacts saved:', contactsToSave.length)
+      }
+
+      // ── Step 6: Build and persist chats cache ──
+      // Load DB clients for name resolution
+      const { data: dbClientes } = await svc
+        .from('clientes')
+        .select('nome, telefone')
+        .eq('user_id', user.id)
+      const clienteMap = new Map<string, string>()
+      for (const cl of dbClientes || []) {
+        if (cl.telefone) {
+          const cleanPhone = cl.telefone.replace(/\D/g, '')
+          clienteMap.set(cleanPhone, cl.nome)
+        }
+      }
+
+      const chatsToSave = apiChats
+        .filter((c: any) => {
+          const jid = c.remoteJid || c.id
+          return jid && jid !== 'status@broadcast'
+        })
+        .map((c: any) => {
+          const jid = c.remoteJid || c.id
+          const isGroup = jid.includes('@g.us')
+          const contact = contactsMap.get(jid)
+          const rawNumber = jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace('@g.us', '')
+
+          // Name resolution priority
+          const clienteName = clienteMap.get(rawNumber) || null
+          const resolvedName = clienteName
+            || contact?.verifiedName
+            || contact?.name
+            || contact?.pushName
+            || (isGroup ? (c.subject || c.groupMetadata?.subject || c.name) : null)
+            || (isGroup ? jid : formatPhone(rawNumber))
+
+          // Last message
+          const lastMsgObj = c.lastMessage?.message || {}
+          const lastMsg = lastMsgObj.conversation
+            || lastMsgObj.extendedTextMessage?.text
+            || lastMsgObj.imageMessage?.caption
+            || lastMsgObj.videoMessage?.caption
+            || lastMsgObj.documentMessage?.fileName
+            || null
+          const mediaLabel = lastMsgObj.stickerMessage ? '🏷️ Figurinha'
+            : lastMsgObj.imageMessage && !lastMsg ? '📷 Imagem'
+            : lastMsgObj.audioMessage ? '🎤 Áudio'
+            : lastMsgObj.videoMessage && !lastMsg ? '🎥 Vídeo'
+            : lastMsgObj.documentMessage && !lastMsg ? '📎 Documento'
+            : null
+          const displayMsg = lastMsg || mediaLabel || ''
+
+          const ts = c.updatedAt
+            || (c.lastMessage?.messageTimestamp
+              ? new Date(Number(c.lastMessage.messageTimestamp) * 1000).toISOString()
+              : new Date().toISOString())
+
+          return {
+            instancia_id: instanceId,
+            remote_jid: jid,
+            nome: resolvedName,
+            foto_url: contact?.foto || c.profilePicUrl || c.profilePictureUrl || null,
+            ultima_mensagem: displayMsg,
+            ultimo_timestamp: ts,
+            direcao: c.lastMessage?.key?.fromMe ? 'out' : 'in',
+            nao_lidas: c.unreadMessages || c.unreadCount || 0,
+            is_group: isGroup,
+          }
+        })
+
+      if (chatsToSave.length > 0) {
+        const { error } = await svc.from('whatsapp_chats_cache')
+          .upsert(chatsToSave, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+        if (error) console.error('Chats cache upsert error:', error)
+        else console.log('Chats cached:', chatsToSave.length)
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        contacts_synced: contactsToSave.length,
+        chats_synced: chatsToSave.length,
+        pics_fetched: jidsNeedPic.length,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
     // ─── SET WEBHOOK ───
     if (action === 'set-webhook') {
       const instance = await getUserInstance()
@@ -64,14 +268,10 @@ Deno.serve(async (req) => {
       }
       const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`
       const evoRes = await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance.instance_name}`, {
-        method: 'POST',
-        headers: evoHeaders(),
+        method: 'POST', headers: evoHeaders(),
         body: JSON.stringify({
           webhook: {
-            enabled: true,
-            url: webhookUrl,
-            webhookByEvents: false,
-            webhookBase64: false,
+            enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false,
             events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
           }
         }),
@@ -83,211 +283,7 @@ Deno.serve(async (req) => {
       })
     }
 
-    // ─── FETCH CHATS ───
-    if (action === 'fetch-chats') {
-      const instance = await getUserInstance()
-      if (!instance) {
-        return new Response(JSON.stringify({ conversations: [] }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      // Step 1: Get chats from findChats
-      let chats: any[] = []
-      try {
-        const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instance.instance_name}`, {
-          method: 'POST',
-          headers: evoHeaders(),
-          body: JSON.stringify({}),
-        })
-        const data = await evoRes.json()
-        console.log('findChats count:', Array.isArray(data) ? data.length : 'not array')
-        // Log first 3 chat objects to understand structure
-        if (Array.isArray(data) && data.length > 0) {
-          console.log('Sample chat[0]:', JSON.stringify(data[0]).substring(0, 500))
-          if (data.length > 1) console.log('Sample chat[1]:', JSON.stringify(data[1]).substring(0, 500))
-        }
-        if (Array.isArray(data)) chats = data
-      } catch (e) {
-        console.error('findChats error:', e)
-      }
-
-      // Step 2: Build contacts map from multiple sources
-      const contactsMap = new Map<string, any>()
-      
-      // Source 1: DB contacts first (our persisted data)
-      const svc = getServiceSupabase()
-      const { data: dbContacts } = await svc
-        .from('whatsapp_contatos')
-        .select('*')
-        .eq('instancia_id', instance.id)
-      if (dbContacts) {
-        for (const c of dbContacts) {
-          if (c.nome) {
-            contactsMap.set(c.remote_jid, { name: c.nome, profilePictureUrl: c.foto_url })
-          }
-        }
-        console.log('DB contacts loaded:', dbContacts.length)
-      }
-
-      // Source 2: Extract names from ALL chat objects
-      for (const c of chats) {
-        const jid = c.remoteJid || c.id
-        if (!jid || jid === 'status@broadcast') continue
-        
-        // Collect all possible name fields from the chat object
-        const notify = c.notify || c.notifyName  // WhatsApp "notify" name
-        const pushName = c.pushName
-        const subject = c.subject || c.groupMetadata?.subject
-        const chatName = c.name || c.formattedName
-        const lastMsgPushName = c.lastMessage?.pushName
-        
-        const bestName = chatName || notify || pushName || subject || lastMsgPushName
-        
-        if (bestName && !contactsMap.has(jid)) {
-          contactsMap.set(jid, { name: bestName, pushName: pushName || notify })
-        }
-      }
-
-      // Source 3: Try Evolution API findContacts (may return names from phone's contact list)
-      try {
-        const res = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instance.instance_name}`, {
-          method: 'POST',
-          headers: evoHeaders(),
-          body: JSON.stringify({}),
-        })
-        const data = await res.json()
-        const contacts = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : []
-        console.log('findContacts count:', contacts.length)
-        for (const c of contacts) {
-          const jid = c.remoteJid || c.id
-          if (!jid) continue
-          const apiName = c.name || c.pushName || c.formattedName || c.notify
-          if (apiName) {
-            // API contact names override chat-extracted names (they may be phone contact names)
-            contactsMap.set(jid, { ...contactsMap.get(jid), name: apiName })
-          }
-        }
-      } catch (e) {
-        console.error('findContacts error:', e)
-      }
-
-      console.log('Total contacts resolved:', contactsMap.size)
-
-      if (chats.length === 0) {
-        return new Response(JSON.stringify({ conversations: [], debug: 'no chats found' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      // Step 3: Fetch profile pictures (including groups, up to 50)
-      const jidsToFetchPic = chats
-        .map((c: any) => c.remoteJid || c.id)
-        .filter((jid: string) => jid && jid !== 'status@broadcast')
-        .slice(0, 50)
-
-      const profilePics = new Map<string, string>()
-      const picBatches = []
-      for (let i = 0; i < jidsToFetchPic.length; i += 10) {
-        picBatches.push(jidsToFetchPic.slice(i, i + 10))
-      }
-      
-      for (const batch of picBatches) {
-        await Promise.all(batch.map(async (jid: string) => {
-          try {
-            const number = jid.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@lid', '')
-            const picRes = await fetch(`${EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instance.instance_name}`, {
-              method: 'POST',
-              headers: evoHeaders(),
-              body: JSON.stringify({ number: jid }),
-            })
-            const picData = await picRes.json()
-            const picUrl = picData?.profilePictureUrl || picData?.picture || picData?.imgUrl
-            if (picUrl) {
-              profilePics.set(jid, picUrl)
-            }
-          } catch (_) {}
-        }))
-      }
-      console.log('Profile pics fetched:', profilePics.size)
-
-      // Step 4: Map to conversations
-      const conversations = chats
-        .filter((c: any) => {
-          const jid = c.remoteJid || c.id
-          return jid && jid !== 'status@broadcast'
-        })
-        .map((c: any) => {
-          const jid = c.remoteJid || c.id
-          const isGroup = jid?.includes('@g.us')
-          const contact = contactsMap.get(jid)
-
-          // Last message extraction
-          const lastMsgObj = c.lastMessage?.message || {}
-          const lastMsg = lastMsgObj.conversation
-            || lastMsgObj.extendedTextMessage?.text
-            || lastMsgObj.imageMessage?.caption
-            || lastMsgObj.videoMessage?.caption
-            || lastMsgObj.documentMessage?.fileName
-            || c.lastMsgContent || ''
-          const stickerMsg = lastMsgObj.stickerMessage ? '🏷️ Figurinha' : null
-          const imageMsg = lastMsgObj.imageMessage && !lastMsg ? '📷 Imagem' : null
-          const audioMsg = lastMsgObj.audioMessage ? '🎤 Áudio' : null
-          const videoMsg = lastMsgObj.videoMessage && !lastMsg ? '🎥 Vídeo' : null
-          const docMsg = lastMsgObj.documentMessage && !lastMsg ? '📎 Documento' : null
-          const displayMsg = lastMsg || stickerMsg || imageMsg || audioMsg || videoMsg || docMsg || ''
-
-          // Name resolution: use the best available name from our contacts map
-          const resolvedName = contact?.name || contact?.pushName
-          const chatName = c.name || c.notify || c.notifyName || c.pushName || c.subject || c.groupMetadata?.subject
-          const lastMsgPushName = !isGroup ? c.lastMessage?.pushName : null
-          
-          // Format phone number for display when no name is available
-          const rawNumber = jid?.replace('@s.whatsapp.net', '').replace('@lid', '') || ''
-          const formattedNumber = rawNumber.length >= 12 && rawNumber.startsWith('55')
-            ? `+${rawNumber.substring(0, 2)} (${rawNumber.substring(2, 4)}) ${rawNumber.substring(4, rawNumber.length - 4)}-${rawNumber.substring(rawNumber.length - 4)}`
-            : rawNumber
-          
-          const displayName = resolvedName || chatName || lastMsgPushName || (isGroup ? jid : formattedNumber) || ''
-
-          return {
-            remote_jid: jid,
-            nome: displayName,
-            numero: isGroup ? '' : jid?.replace('@s.whatsapp.net', '').replace('@lid', '') || '',
-            foto_url: profilePics.get(jid) || c.profilePicUrl || c.profilePictureUrl || contact?.profilePictureUrl || null,
-            last_message: displayMsg,
-            last_timestamp: c.updatedAt || c.lastMessage?.messageTimestamp 
-              ? new Date((c.lastMessage?.messageTimestamp || 0) * 1000).toISOString()
-              : new Date().toISOString(),
-            direcao: c.lastMessage?.key?.fromMe ? 'out' : 'in',
-            is_group: isGroup,
-          }
-        })
-
-      conversations.sort((a: any, b: any) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime())
-
-      // Save resolved contact names to DB for future use (fire and forget)
-      const contactsToSave = conversations
-        .filter((c: any) => !c.is_group && c.nome && c.nome !== c.numero && c.numero)
-        .map((c: any) => ({
-          instancia_id: instance.id,
-          remote_jid: c.remote_jid,
-          nome: c.nome,
-          numero: c.numero,
-          foto_url: c.foto_url,
-        }))
-      if (contactsToSave.length > 0) {
-        svc.from('whatsapp_contatos')
-          .upsert(contactsToSave, { onConflict: 'instancia_id,remote_jid' })
-          .then(({ error }: any) => { if (error) console.error('Save contacts error:', error) })
-      }
-
-      return new Response(JSON.stringify({ conversations }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // ─── FETCH MESSAGES FROM EVOLUTION API ───
+    // ─── FETCH MESSAGES ───
     if (action === 'fetch-messages') {
       const instance = await getUserInstance()
       if (!instance) {
@@ -303,10 +299,10 @@ Deno.serve(async (req) => {
         })
       }
 
-      const svcMsg = getServiceSupabase()
+      const svc = getServiceSupabase()
 
-      // Step 1: Always load DB messages first (these are reliable now)
-      const { data: dbMessages } = await svcMsg
+      // Load DB messages
+      const { data: dbMessages } = await svc
         .from('whatsapp_mensagens')
         .select('*')
         .eq('instancia_id', instance.id)
@@ -316,53 +312,37 @@ Deno.serve(async (req) => {
 
       const existingIds = new Set((dbMessages || []).map((m: any) => m.message_id))
 
-      // Step 2: Try to get MORE messages from Evolution API (for history not yet in DB)
+      // Fetch from Evolution API for backfill
       let apiMessages: any[] = []
       try {
         const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findMessages/${instance.instance_name}`, {
-          method: 'POST',
-          headers: evoHeaders(),
-          body: JSON.stringify({
-            where: { key: { remoteJid } },
-            limit: 200,
-          }),
+          method: 'POST', headers: evoHeaders(),
+          body: JSON.stringify({ where: { key: { remoteJid } }, limit: 200 }),
         })
         const raw = await evoRes.text()
-        console.log('findMessages raw response (first 500):', raw.substring(0, 500))
-        
         let data: any
         try { data = JSON.parse(raw) } catch { data = null }
-        
+
         if (data) {
-          // Handle all known response shapes
-          if (Array.isArray(data)) {
-            apiMessages = data
-          } else if (Array.isArray(data?.messages)) {
-            apiMessages = data.messages
-          } else if (Array.isArray(data?.records)) {
-            apiMessages = data.records
-          } else if (data && typeof data === 'object') {
-            const keys = Object.keys(data)
-            for (const key of keys) {
-              if (Array.isArray(data[key]) && data[key].length > 0) {
-                const first = data[key][0]
-                if (first?.key || first?.message || first?.messageTimestamp) {
-                  apiMessages = data[key]
-                  break
-                }
+          if (Array.isArray(data)) apiMessages = data
+          else if (Array.isArray(data?.messages?.records)) apiMessages = data.messages.records
+          else if (Array.isArray(data?.messages)) apiMessages = data.messages
+          else if (Array.isArray(data?.records)) apiMessages = data.records
+          else if (data?.key) apiMessages = [data]
+          else {
+            // Try to find any array with message-like objects
+            for (const key of Object.keys(data)) {
+              if (Array.isArray(data[key]) && data[key].length > 0 && (data[key][0]?.key || data[key][0]?.message)) {
+                apiMessages = data[key]
+                break
               }
-            }
-            if (apiMessages.length === 0 && data.key) {
-              apiMessages = [data]
             }
           }
         }
-        console.log('API messages parsed:', apiMessages.length)
-      } catch (e) {
-        console.error('findMessages error:', e)
-      }
+        console.log('API messages fetched:', apiMessages.length)
+      } catch (e) { console.error('findMessages error:', e) }
 
-      // Step 3: Parse API messages and find new ones not in DB
+      // Parse and find new messages
       const newMessages: any[] = []
       for (const msg of apiMessages) {
         const msgId = msg.key?.id || msg.id
@@ -405,36 +385,32 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Step 4: Persist new API messages to DB (fire and forget)
+      // Persist new messages
       if (newMessages.length > 0) {
-        console.log('Persisting', newMessages.length, 'new messages from API')
-        svcMsg.from('whatsapp_mensagens')
+        svc.from('whatsapp_mensagens')
           .upsert(newMessages, { onConflict: 'message_id', ignoreDuplicates: true })
-          .then(({ error }: any) => { if (error) console.error('Persist error:', error) })
+          .then(({ error }: any) => { if (error) console.error('Persist messages error:', error) })
       }
 
-      // Step 5: Combine DB + new API messages, sort by timestamp
+      // Combine and sort
       const allMessages = [
         ...(dbMessages || []).map((m: any) => ({
-          id: m.id,
-          remote_jid: m.remote_jid,
-          direcao: m.direcao,
-          conteudo: m.conteudo,
-          tipo: m.tipo,
-          timestamp: m.timestamp,
-          message_id: m.message_id,
+          id: m.id, remote_jid: m.remote_jid, direcao: m.direcao,
+          conteudo: m.conteudo, tipo: m.tipo, timestamp: m.timestamp, message_id: m.message_id,
         })),
         ...newMessages.map((m: any) => ({
-          id: m.message_id,
-          remote_jid: m.remote_jid,
-          direcao: m.direcao,
-          conteudo: m.conteudo,
-          tipo: m.tipo,
-          timestamp: m.timestamp,
-          message_id: m.message_id,
+          id: m.message_id, remote_jid: m.remote_jid, direcao: m.direcao,
+          conteudo: m.conteudo, tipo: m.tipo, timestamp: m.timestamp, message_id: m.message_id,
         })),
       ]
       allMessages.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+      // Reset unread count for this chat
+      svc.from('whatsapp_chats_cache')
+        .update({ nao_lidas: 0 })
+        .eq('instancia_id', instance.id)
+        .eq('remote_jid', remoteJid)
+        .then(() => {})
 
       return new Response(JSON.stringify({ messages: allMessages }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -444,23 +420,20 @@ Deno.serve(async (req) => {
     // ─── CONNECT ───
     if (action === 'connect') {
       const instanceName = `jarvis_${user.id.substring(0, 8)}`
-      
+
       let instanceExists = false
       try {
         const checkRes = await fetch(
           `${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`,
           { headers: evoHeaders() }
         )
-        if (checkRes.ok) {
-          instanceExists = true
-        }
+        if (checkRes.ok) instanceExists = true
       } catch (_e) {}
 
       if (instanceExists) {
         try {
           await fetch(`${EVOLUTION_API_URL}/instance/logout/${instanceName}`, {
-            method: 'DELETE',
-            headers: evoHeaders(),
+            method: 'DELETE', headers: evoHeaders(),
           })
           await new Promise(r => setTimeout(r, 2000))
         } catch (_e) {}
@@ -473,16 +446,12 @@ Deno.serve(async (req) => {
 
       if (!instanceExists) {
         const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-          method: 'POST',
-          headers: evoHeaders(),
+          method: 'POST', headers: evoHeaders(),
           body: JSON.stringify({
-            instanceName,
-            qrcode: true,
-            integration: 'WHATSAPP-BAILEYS',
+            instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS',
             webhook: {
               url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`,
-              byEvents: false,
-              base64: false,
+              byEvents: false, base64: false,
               headers: { 'apikey': EVOLUTION_API_KEY },
               events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
             },
@@ -508,9 +477,7 @@ Deno.serve(async (req) => {
             qrCode = qrData.code || null
             pairingCode = qrData.pairingCode || null
             if (qrCode || qrBase64) break
-          } catch (e) {
-            console.error('QR fetch error:', e)
-          }
+          } catch (e) { console.error('QR fetch error:', e) }
         }
       }
 
@@ -522,19 +489,12 @@ Deno.serve(async (req) => {
         .maybeSingle()
 
       if (existing) {
-        await supabase
-          .from('whatsapp_instancias')
+        await supabase.from('whatsapp_instancias')
           .update({ status: 'connecting', instance_id: instanceId })
           .eq('id', existing.id)
       } else {
-        await supabase
-          .from('whatsapp_instancias')
-          .insert({
-            user_id: user.id,
-            instance_name: instanceName,
-            instance_id: instanceId,
-            status: 'connecting',
-          })
+        await supabase.from('whatsapp_instancias')
+          .insert({ user_id: user.id, instance_name: instanceName, instance_id: instanceId, status: 'connecting' })
       }
 
       return new Response(JSON.stringify({
@@ -558,17 +518,13 @@ Deno.serve(async (req) => {
       )
       const evoData = await evoRes.json()
       const state = evoData.instance?.state || 'close'
-
       const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
-      await supabase
-        .from('whatsapp_instancias')
+      await supabase.from('whatsapp_instancias')
         .update({ status: newStatus })
         .eq('id', instance.id)
 
       return new Response(JSON.stringify({
-        status: newStatus,
-        instance: instance.instance_name,
-        phone: instance.phone_number,
+        status: newStatus, instance: instance.instance_name, phone: instance.phone_number,
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
@@ -577,17 +533,14 @@ Deno.serve(async (req) => {
       const instance = await getUserInstance()
       if (!instance) {
         return new Response(JSON.stringify({ error: 'No instance' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
-
       const evoRes = await fetch(
         `${EVOLUTION_API_URL}/instance/connect/${instance.instance_name}`,
         { headers: evoHeaders() }
       )
       const evoData = await evoRes.json()
-
       return new Response(JSON.stringify({
         qrcode: evoData.base64 || evoData.qrcode?.base64 || null,
         code: evoData.code || evoData.qrcode?.code || null,
@@ -599,8 +552,7 @@ Deno.serve(async (req) => {
       const instance = await getUserInstance()
       if (!instance) {
         return new Response(JSON.stringify({ error: 'No instance' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
 
@@ -609,101 +561,33 @@ Deno.serve(async (req) => {
 
       const evoRes = await fetch(
         `${EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`,
-        {
-          method: 'POST',
-          headers: evoHeaders(),
-          body: JSON.stringify({ number, text }),
-        }
+        { method: 'POST', headers: evoHeaders(), body: JSON.stringify({ number, text }) }
       )
       const evoData = await evoRes.json()
 
+      const remoteJid = number.includes('@') ? number : `${number}@s.whatsapp.net`
+
+      // Save sent message
       await supabase.from('whatsapp_mensagens').insert({
         instancia_id: instance.id,
-        remote_jid: number.includes('@') ? number : `${number}@s.whatsapp.net`,
+        remote_jid: remoteJid,
         direcao: 'out',
         conteudo: text,
         tipo: 'text',
-        message_id: evoData.key?.id || null,
+        message_id: evoData.key?.id || crypto.randomUUID(),
       })
+
+      // Update chat cache
+      const svc = getServiceSupabase()
+      await svc.from('whatsapp_chats_cache').upsert({
+        instancia_id: instance.id,
+        remote_jid: remoteJid,
+        ultima_mensagem: text,
+        ultimo_timestamp: new Date().toISOString(),
+        direcao: 'out',
+      }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
 
       return new Response(JSON.stringify({ success: true, data: evoData }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // ─── MESSAGES (DB) ───
-    if (action === 'messages') {
-      const instance = await getUserInstance()
-      if (!instance) {
-        return new Response(JSON.stringify({ messages: [] }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      const remoteJid = url.searchParams.get('remoteJid')
-
-      let query = supabase
-        .from('whatsapp_mensagens')
-        .select('*')
-        .eq('instancia_id', instance.id)
-        .order('timestamp', { ascending: true })
-
-      if (remoteJid) {
-        query = query.eq('remote_jid', remoteJid)
-      }
-
-      const { data: messages } = await query.limit(200)
-
-      return new Response(JSON.stringify({ messages: messages || [] }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // ─── CONVERSATIONS (DB fallback) ───
-    if (action === 'conversations') {
-      const instance = await getUserInstance()
-      if (!instance) {
-        return new Response(JSON.stringify({ conversations: [] }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
-
-      const { data: contacts } = await supabase
-        .from('whatsapp_contatos')
-        .select('*')
-        .eq('instancia_id', instance.id)
-
-      const { data: messages } = await supabase
-        .from('whatsapp_mensagens')
-        .select('*')
-        .eq('instancia_id', instance.id)
-        .order('timestamp', { ascending: false })
-
-      const lastMessages = new Map<string, any>()
-      for (const msg of messages || []) {
-        if (!lastMessages.has(msg.remote_jid)) {
-          lastMessages.set(msg.remote_jid, msg)
-        }
-      }
-
-      const contactMap = new Map<string, any>()
-      for (const c of contacts || []) {
-        contactMap.set(c.remote_jid, c)
-      }
-
-      const conversations = Array.from(lastMessages.entries()).map(([jid, msg]) => ({
-        remote_jid: jid,
-        nome: contactMap.get(jid)?.nome || jid.replace('@s.whatsapp.net', ''),
-        numero: contactMap.get(jid)?.numero || jid.replace('@s.whatsapp.net', ''),
-        foto_url: contactMap.get(jid)?.foto_url || null,
-        last_message: msg.conteudo,
-        last_timestamp: msg.timestamp,
-        direcao: msg.direcao,
-      }))
-
-      conversations.sort((a, b) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime())
-
-      return new Response(JSON.stringify({ conversations }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
@@ -722,8 +606,7 @@ Deno.serve(async (req) => {
         { method: 'DELETE', headers: evoHeaders() }
       )
 
-      await supabase
-        .from('whatsapp_instancias')
+      await supabase.from('whatsapp_instancias')
         .update({ status: 'disconnected' })
         .eq('id', instance.id)
 
@@ -733,13 +616,11 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ error: 'Unknown action' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 })
