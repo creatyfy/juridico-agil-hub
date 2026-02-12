@@ -32,7 +32,7 @@ const stats = [
 const benefits = [
   { icon: <FileText className="h-5 w-5" />, text: 'Consulta processual em todos os tribunais' },
   { icon: <MessageSquare className="h-5 w-5" />, text: 'Notificações automáticas via WhatsApp' },
-  { icon: <BarChart3 className="h-5 w-5" />, text: 'Relatórios e insights do escritório' },
+  
   { icon: <Shield className="h-5 w-5" />, text: 'Segurança e conformidade com a OAB' },
   { icon: <Zap className="h-5 w-5" />, text: 'Preparado para Inteligência Artificial' },
   { icon: <CheckCircle2 className="h-5 w-5" />, text: 'Suporte dedicado e treinamento incluso' },
