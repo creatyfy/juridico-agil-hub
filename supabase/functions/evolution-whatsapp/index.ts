@@ -112,10 +112,44 @@ Deno.serve(async (req) => {
         console.error('findChats error:', e)
       }
 
-      // Step 2: Try to get contacts (multiple endpoint attempts)
+      // Step 2: Build contacts map from multiple sources
       const contactsMap = new Map<string, any>()
       
-      // Attempt 1: findContacts POST
+      // Source 1: DB contacts first (our persisted data)
+      const svc = getServiceSupabase()
+      const { data: dbContacts } = await svc
+        .from('whatsapp_contatos')
+        .select('*')
+        .eq('instancia_id', instance.id)
+      if (dbContacts) {
+        for (const c of dbContacts) {
+          if (c.nome) {
+            contactsMap.set(c.remote_jid, { name: c.nome, profilePictureUrl: c.foto_url })
+          }
+        }
+        console.log('DB contacts loaded:', dbContacts.length)
+      }
+
+      // Source 2: Extract names from ALL chat objects
+      for (const c of chats) {
+        const jid = c.remoteJid || c.id
+        if (!jid || jid === 'status@broadcast') continue
+        
+        // Collect all possible name fields from the chat object
+        const notify = c.notify || c.notifyName  // WhatsApp "notify" name
+        const pushName = c.pushName
+        const subject = c.subject || c.groupMetadata?.subject
+        const chatName = c.name || c.formattedName
+        const lastMsgPushName = c.lastMessage?.pushName
+        
+        const bestName = chatName || notify || pushName || subject || lastMsgPushName
+        
+        if (bestName && !contactsMap.has(jid)) {
+          contactsMap.set(jid, { name: bestName, pushName: pushName || notify })
+        }
+      }
+
+      // Source 3: Try Evolution API findContacts (may return names from phone's contact list)
       try {
         const res = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instance.instance_name}`, {
           method: 'POST',
@@ -123,64 +157,19 @@ Deno.serve(async (req) => {
           body: JSON.stringify({}),
         })
         const data = await res.json()
-        console.log('findContacts POST count:', Array.isArray(data) ? data.length : typeof data)
-        if (Array.isArray(data)) {
-          for (const c of data) {
-            const jid = c.remoteJid || c.id
-            if (jid) contactsMap.set(jid, c)
+        const contacts = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : []
+        console.log('findContacts count:', contacts.length)
+        for (const c of contacts) {
+          const jid = c.remoteJid || c.id
+          if (!jid) continue
+          const apiName = c.name || c.pushName || c.formattedName || c.notify
+          if (apiName) {
+            // API contact names override chat-extracted names (they may be phone contact names)
+            contactsMap.set(jid, { ...contactsMap.get(jid), name: apiName })
           }
         }
       } catch (e) {
-        console.error('findContacts POST error:', e)
-      }
-
-      // Attempt 2: contact/find - handle both array and object with contacts property
-      if (contactsMap.size === 0) {
-        try {
-          const res = await fetch(`${EVOLUTION_API_URL}/contact/find/${instance.instance_name}`, {
-            method: 'POST',
-            headers: evoHeaders(),
-            body: JSON.stringify({ where: {} }),
-          })
-          const data = await res.json()
-          console.log('contact/find raw type:', typeof data, 'keys:', data ? Object.keys(data).slice(0, 5) : 'null')
-          const contacts = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : Array.isArray(data?.data) ? data.data : []
-          console.log('contact/find resolved count:', contacts.length)
-          for (const c of contacts) {
-            const jid = c.remoteJid || c.id || c.wuid
-            if (jid) contactsMap.set(jid, c)
-          }
-        } catch (e) {
-          console.error('contact/find error:', e)
-        }
-      }
-
-      // Attempt 3: Extract names from chat objects themselves (pushName, lastMessage.pushName)
-      for (const c of chats) {
-        const jid = c.remoteJid || c.id
-        if (!jid || contactsMap.has(jid)) continue
-        // For individual chats, the lastMessage.pushName has the contact's WhatsApp profile name
-        const nameFromChat = c.pushName || c.lastMessage?.pushName
-        if (nameFromChat) {
-          contactsMap.set(jid, { pushName: nameFromChat })
-        }
-      }
-
-      // Attempt 4: DB contacts as fallback for any remaining
-      {
-        const svc = getServiceSupabase()
-        const { data: dbContacts } = await svc
-          .from('whatsapp_contatos')
-          .select('*')
-          .eq('instancia_id', instance.id)
-        if (dbContacts) {
-          for (const c of dbContacts) {
-            if (!contactsMap.has(c.remote_jid) && c.nome) {
-              contactsMap.set(c.remote_jid, { pushName: c.nome, profilePictureUrl: c.foto_url })
-            }
-          }
-          console.log('DB contacts count:', dbContacts.length)
-        }
+        console.error('findContacts error:', e)
       }
 
       console.log('Total contacts resolved:', contactsMap.size)
@@ -248,16 +237,18 @@ Deno.serve(async (req) => {
           const docMsg = lastMsgObj.documentMessage && !lastMsg ? '📎 Documento' : null
           const displayMsg = lastMsg || stickerMsg || imageMsg || audioMsg || videoMsg || docMsg || ''
 
-          // Name priority: 
-          // 1. contact.name (saved in phone contacts)
-          // 2. contact.pushName (WhatsApp profile name)
-          // 3. chat object name/pushName/subject (for groups)
-          // 4. lastMessage.pushName (profile name from last message sender, useful for 1:1 chats)
-          // 5. number as fallback
-          const contactName = contact?.name || contact?.pushName || contact?.formattedName
-          const chatName = c.name || c.pushName || c.subject || c.groupMetadata?.subject
+          // Name resolution: use the best available name from our contacts map
+          const resolvedName = contact?.name || contact?.pushName
+          const chatName = c.name || c.notify || c.notifyName || c.pushName || c.subject || c.groupMetadata?.subject
           const lastMsgPushName = !isGroup ? c.lastMessage?.pushName : null
-          const displayName = contactName || chatName || lastMsgPushName || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '').replace('@lid', '')) || ''
+          
+          // Format phone number for display when no name is available
+          const rawNumber = jid?.replace('@s.whatsapp.net', '').replace('@lid', '') || ''
+          const formattedNumber = rawNumber.length >= 12 && rawNumber.startsWith('55')
+            ? `+${rawNumber.substring(0, 2)} (${rawNumber.substring(2, 4)}) ${rawNumber.substring(4, rawNumber.length - 4)}-${rawNumber.substring(rawNumber.length - 4)}`
+            : rawNumber
+          
+          const displayName = resolvedName || chatName || lastMsgPushName || (isGroup ? jid : formattedNumber) || ''
 
           return {
             remote_jid: jid,
@@ -276,7 +267,6 @@ Deno.serve(async (req) => {
       conversations.sort((a: any, b: any) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime())
 
       // Save resolved contact names to DB for future use (fire and forget)
-      const svc = getServiceSupabase()
       const contactsToSave = conversations
         .filter((c: any) => !c.is_group && c.nome && c.nome !== c.numero && c.numero)
         .map((c: any) => ({
@@ -289,7 +279,7 @@ Deno.serve(async (req) => {
       if (contactsToSave.length > 0) {
         svc.from('whatsapp_contatos')
           .upsert(contactsToSave, { onConflict: 'instancia_id,remote_jid' })
-          .then(({ error }) => { if (error) console.error('Save contacts error:', error) })
+          .then(({ error }: any) => { if (error) console.error('Save contacts error:', error) })
       }
 
       return new Response(JSON.stringify({ conversations }), {
@@ -370,12 +360,27 @@ Deno.serve(async (req) => {
             timestamp: msg.messageTimestamp
               ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
               : msg.createdAt || new Date().toISOString(),
-            message_id: msg.key?.id || null,
+            message_id: msg.key?.id || crypto.randomUUID(),
           }
         })
 
         // Sort oldest first
         messages.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+        // Persist messages to DB (fire and forget) so realtime and history work
+        const svcMsg = getServiceSupabase()
+        const toSave = messages.map((m: any) => ({
+          instancia_id: instance.id,
+          remote_jid: m.remote_jid,
+          direcao: m.direcao,
+          conteudo: m.conteudo,
+          tipo: m.tipo,
+          timestamp: m.timestamp,
+          message_id: m.message_id,
+        }))
+        svcMsg.from('whatsapp_mensagens')
+          .upsert(toSave, { onConflict: 'message_id', ignoreDuplicates: true })
+          .then(({ error }: any) => { if (error) console.error('Persist messages error:', error) })
 
         return new Response(JSON.stringify({ messages }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
