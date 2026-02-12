@@ -22,7 +22,6 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // Find the instance in DB
     const { data: instance } = await supabase
       .from('whatsapp_instancias')
       .select('*')
@@ -40,39 +39,30 @@ Deno.serve(async (req) => {
     if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
       const state = body.data?.state
       const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
-      
-      await supabase
-        .from('whatsapp_instancias')
-        .update({ 
+      await supabase.from('whatsapp_instancias')
+        .update({
           status: newStatus,
           phone_number: body.data?.ownerJid?.replace('@s.whatsapp.net', '') || instance.phone_number,
         })
         .eq('id', instance.id)
     }
 
-    // Handle incoming messages - Evolution API v2 format
+    // Handle incoming messages
     if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
-      // v2 sends data as array or single object, normalize
       let messages: any[] = []
       const data = body.data
-      
-      if (Array.isArray(data)) {
-        messages = data
-      } else if (data && typeof data === 'object') {
-        // v2 may wrap in { messages: [...] } or send a single message
-        if (Array.isArray(data.messages)) {
-          messages = data.messages
-        } else if (data.key) {
-          // Single message object
-          messages = [data]
-        }
+
+      if (Array.isArray(data)) messages = data
+      else if (data && typeof data === 'object') {
+        if (Array.isArray(data.messages)) messages = data.messages
+        else if (data.key) messages = [data]
       }
 
       console.log('Processing', messages.length, 'messages')
-      
+
       for (const msg of messages) {
         if (!msg.key) continue
-        
+
         const isFromMe = msg.key.fromMe || false
         const remoteJid = msg.key.remoteJid
         if (!remoteJid || remoteJid === 'status@broadcast') continue
@@ -96,7 +86,6 @@ Deno.serve(async (req) => {
           : msgContent.locationMessage ? 'location'
           : 'other'
 
-        // Display text for non-text types
         const displayContent = content || (messageType === 'image' ? '📷 Imagem'
           : messageType === 'sticker' ? '🏷️ Figurinha'
           : messageType === 'audio' ? '🎤 Áudio'
@@ -106,7 +95,11 @@ Deno.serve(async (req) => {
           : messageType === 'location' ? '📍 Localização'
           : '[mídia]')
 
-        // Upsert message (avoid duplicates)
+        const msgTimestamp = msg.messageTimestamp
+          ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
+          : new Date().toISOString()
+
+        // Upsert message
         const { error: msgError } = await supabase
           .from('whatsapp_mensagens')
           .upsert({
@@ -116,27 +109,62 @@ Deno.serve(async (req) => {
             conteudo: displayContent,
             tipo: messageType,
             message_id: msg.key.id,
-            timestamp: msg.messageTimestamp
-              ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
-              : new Date().toISOString(),
+            timestamp: msgTimestamp,
           }, { onConflict: 'message_id', ignoreDuplicates: true })
 
         if (msgError) console.error('Message upsert error:', msgError)
 
-        // Upsert contact
+        // Upsert contact with pushName and verifiedName
         const pushName = msg.pushName || null
-        if (pushName && !remoteJid.includes('@g.us')) {
-          await supabase
-            .from('whatsapp_contatos')
-            .upsert({
-              instancia_id: instance.id,
-              remote_jid: remoteJid,
-              nome: pushName,
-              numero: remoteJid.replace('@s.whatsapp.net', ''),
-            }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+        const verifiedName = msg.verifiedBizName || null
+        if (!remoteJid.includes('@g.us')) {
+          const contactData: any = {
+            instancia_id: instance.id,
+            remote_jid: remoteJid,
+            numero: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+          }
+          if (pushName) {
+            contactData.push_name = pushName
+            contactData.nome = pushName // fallback name
+          }
+          if (verifiedName) {
+            contactData.verified_name = verifiedName
+            contactData.nome = verifiedName // higher priority
+          }
+          await supabase.from('whatsapp_contatos')
+            .upsert(contactData, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
         }
 
-        // Create notification for incoming messages (limit to avoid spam)
+        // Update chats cache
+        const chatUpdate: any = {
+          instancia_id: instance.id,
+          remote_jid: remoteJid,
+          ultima_mensagem: displayContent,
+          ultimo_timestamp: msgTimestamp,
+          direcao: isFromMe ? 'out' : 'in',
+          is_group: remoteJid.includes('@g.us'),
+        }
+        // If incoming, increment unread count
+        if (!isFromMe) {
+          // Get current unread count
+          const { data: currentChat } = await supabase
+            .from('whatsapp_chats_cache')
+            .select('nao_lidas, nome')
+            .eq('instancia_id', instance.id)
+            .eq('remote_jid', remoteJid)
+            .maybeSingle()
+
+          chatUpdate.nao_lidas = (currentChat?.nao_lidas || 0) + 1
+          // Keep existing name if set, otherwise use pushName
+          if (!currentChat?.nome && pushName) {
+            chatUpdate.nome = pushName
+          }
+        }
+
+        await supabase.from('whatsapp_chats_cache')
+          .upsert(chatUpdate, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+
+        // Notification for incoming messages
         if (!isFromMe && messageType !== 'other') {
           await supabase.from('notificacoes').insert({
             user_id: instance.user_id,
