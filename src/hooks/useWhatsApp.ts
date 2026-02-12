@@ -43,7 +43,17 @@ function callEvolution(action: string, params?: Record<string, string>, body?: a
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
       },
       body: body ? JSON.stringify(body) : undefined,
-    }).then(r => r.json());
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 401) {
+          console.warn('Session expired, signing out...');
+          supabase.auth.signOut();
+        }
+        throw new Error(data?.error || `Edge function returned ${r.status}`);
+      }
+      return data;
+    });
   });
 }
 
