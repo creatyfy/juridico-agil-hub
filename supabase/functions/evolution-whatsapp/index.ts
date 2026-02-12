@@ -51,73 +51,70 @@ Deno.serve(async (req) => {
     if (action === 'connect') {
       const instanceName = `jarvis_${user.id.substring(0, 8)}`
       
-      // Try to delete existing instance first to get a fresh QR code
+      // Step 1: Check if instance already exists on Evolution API
+      let instanceExists = false
       try {
-        await fetch(`${EVOLUTION_API_URL}/instance/delete/${instanceName}`, {
-          method: 'DELETE',
-          headers: evoHeaders(),
-        })
-        console.log('Deleted existing instance (if any)')
+        const checkRes = await fetch(
+          `${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`,
+          { headers: evoHeaders() }
+        )
+        if (checkRes.ok) {
+          instanceExists = true
+          console.log('Instance already exists, will try to connect directly')
+        }
       } catch (_e) {
-        // Ignore - instance may not exist
+        // Instance doesn't exist
       }
 
-      // Create fresh instance on Evolution API
-      const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-        method: 'POST',
-        headers: evoHeaders(),
-        body: JSON.stringify({
-          instanceName,
-          qrcode: true,
-          integration: 'WHATSAPP-BAILEYS',
-          webhook: {
-            url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`,
-            byEvents: false,
-            base64: false,
-            headers: { 'apikey': EVOLUTION_API_KEY },
-            events: [
-              'MESSAGES_UPSERT',
-              'CONNECTION_UPDATE',
-            ],
-          },
-        }),
-      })
-
-      const evoData = await evoRes.json()
-      console.log('Create instance response:', JSON.stringify(evoData))
-
-      // Save instance in DB
-      const { data: existing } = await supabase
-        .from('whatsapp_instancias')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('instance_name', instanceName)
-        .maybeSingle()
-
-      if (existing) {
-        await supabase
-          .from('whatsapp_instancias')
-          .update({ status: 'connecting', instance_id: evoData.instance?.instanceId || null })
-          .eq('id', existing.id)
-      } else {
-        await supabase
-          .from('whatsapp_instancias')
-          .insert({
-            user_id: user.id,
-            instance_name: instanceName,
-            instance_id: evoData.instance?.instanceId || null,
-            status: 'connecting',
+      // Step 2: If instance exists, try to logout first then connect for fresh QR
+      if (instanceExists) {
+        try {
+          await fetch(`${EVOLUTION_API_URL}/instance/logout/${instanceName}`, {
+            method: 'DELETE',
+            headers: evoHeaders(),
           })
+          console.log('Logged out existing instance')
+          await new Promise(r => setTimeout(r, 2000))
+        } catch (_e) {
+          console.log('Logout failed (may already be disconnected)')
+        }
       }
 
-      // Get QR code with retry logic - Evolution API needs time to generate
-      let qrBase64 = evoData.qrcode?.base64 || null
-      let qrCode = evoData.code || evoData.qrcode?.code || null
-      let pairingCode = evoData.pairingCode || null
+      let qrBase64: string | null = null
+      let qrCode: string | null = null
+      let pairingCode: string | null = null
+      let instanceId: string | null = null
 
+      if (!instanceExists) {
+        // Step 3a: Create new instance
+        const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+          method: 'POST',
+          headers: evoHeaders(),
+          body: JSON.stringify({
+            instanceName,
+            qrcode: true,
+            integration: 'WHATSAPP-BAILEYS',
+            webhook: {
+              url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`,
+              byEvents: false,
+              base64: false,
+              headers: { 'apikey': EVOLUTION_API_KEY },
+              events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+            },
+          }),
+        })
+        const evoData = await evoRes.json()
+        console.log('Create instance response:', JSON.stringify(evoData))
+        instanceId = evoData.instance?.instanceId || null
+        qrBase64 = evoData.qrcode?.base64 || null
+        qrCode = evoData.code || evoData.qrcode?.code || null
+        pairingCode = evoData.pairingCode || null
+      }
+
+      // Step 4: If no QR yet, call connect endpoint to get QR
       if (!qrCode && !qrBase64) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          await new Promise(r => setTimeout(r, 3000))
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise(r => setTimeout(r, 2000))
           try {
             const qrRes = await fetch(
               `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
@@ -133,6 +130,30 @@ Deno.serve(async (req) => {
             console.error('QR fetch error:', e)
           }
         }
+      }
+
+      // Step 5: Save instance in DB
+      const { data: existing } = await supabase
+        .from('whatsapp_instancias')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('instance_name', instanceName)
+        .maybeSingle()
+
+      if (existing) {
+        await supabase
+          .from('whatsapp_instancias')
+          .update({ status: 'connecting', instance_id: instanceId })
+          .eq('id', existing.id)
+      } else {
+        await supabase
+          .from('whatsapp_instancias')
+          .insert({
+            user_id: user.id,
+            instance_name: instanceName,
+            instance_id: instanceId,
+            status: 'connecting',
+          })
       }
 
       return new Response(JSON.stringify({
