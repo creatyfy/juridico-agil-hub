@@ -48,6 +48,74 @@ Deno.serve(async (req) => {
       return data
     }
 
+    // Set webhook on existing instance
+    if (action === 'set-webhook') {
+      const instance = await getUserInstance()
+      if (!instance) {
+        return new Response(JSON.stringify({ error: 'No instance' }), {
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`
+      const evoRes = await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance.instance_name}`, {
+        method: 'POST',
+        headers: evoHeaders(),
+        body: JSON.stringify({
+          url: webhookUrl,
+          webhook_by_events: false,
+          webhook_base64: false,
+          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+        }),
+      })
+      const evoData = await evoRes.json()
+      console.log('Set webhook response:', JSON.stringify(evoData))
+      return new Response(JSON.stringify({ success: true, data: evoData }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Fetch chats from Evolution API directly
+    if (action === 'fetch-chats') {
+      const instance = await getUserInstance()
+      if (!instance) {
+        return new Response(JSON.stringify({ conversations: [] }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      
+      // Get chats from Evolution API
+      const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instance.instance_name}`, {
+        method: 'POST',
+        headers: evoHeaders(),
+        body: JSON.stringify({}),
+      })
+      const chats = await evoRes.json()
+      console.log('Fetch chats response count:', Array.isArray(chats) ? chats.length : 'not array')
+      
+      if (!Array.isArray(chats)) {
+        return new Response(JSON.stringify({ conversations: [], raw: chats }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      // Map chats to conversations format
+      const conversations = chats
+        .filter((c: any) => c.id && !c.id.includes('@g.us') && c.id !== 'status@broadcast')
+        .map((c: any) => ({
+          remote_jid: c.id,
+          nome: c.name || c.id?.replace('@s.whatsapp.net', '') || '',
+          numero: c.id?.replace('@s.whatsapp.net', '') || '',
+          foto_url: c.profilePictureUrl || null,
+          last_message: c.lastMsgContent || c.lastMessage?.message?.conversation || '',
+          last_timestamp: c.updatedAt || new Date().toISOString(),
+          direcao: 'in',
+        }))
+
+      return new Response(JSON.stringify({ conversations }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (action === 'connect') {
       const instanceName = `jarvis_${user.id.substring(0, 8)}`
       
