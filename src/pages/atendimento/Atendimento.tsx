@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X } from 'lucide-react';
+import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X, Mic, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -110,35 +110,18 @@ function MessageBubble({ msg }: { msg: Message }) {
   const isOut = msg.direcao === 'out';
   const tipo = msg.tipo || 'text';
   
-  // Render content based on type
   let content: React.ReactNode;
   
   if (tipo === 'image' || tipo === 'imageMessage') {
-    content = (
-      <div>
-        {msg.conteudo?.startsWith('http') ? (
-          <img src={msg.conteudo} alt="imagem" className="max-w-full rounded-md mb-1" />
-        ) : (
-          <p className="whitespace-pre-wrap break-words">📷 Imagem</p>
-        )}
-      </div>
-    );
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '📷 Imagem'}</p>;
   } else if (tipo === 'sticker' || tipo === 'stickerMessage') {
-    content = (
-      <div>
-        {msg.conteudo?.startsWith('http') ? (
-          <img src={msg.conteudo} alt="figurinha" className="w-32 h-32 object-contain" />
-        ) : (
-          <p className="text-3xl">🏷️</p>
-        )}
-      </div>
-    );
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '🏷️ Figurinha'}</p>;
   } else if (tipo === 'audio' || tipo === 'audioMessage') {
-    content = <p className="whitespace-pre-wrap break-words">🎤 Áudio</p>;
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '🎤 Áudio'}</p>;
   } else if (tipo === 'video' || tipo === 'videoMessage') {
-    content = <p className="whitespace-pre-wrap break-words">🎥 Vídeo</p>;
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '🎥 Vídeo'}</p>;
   } else if (tipo === 'document' || tipo === 'documentMessage') {
-    content = <p className="whitespace-pre-wrap break-words">📎 Documento</p>;
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '📎 Documento'}</p>;
   } else {
     content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '[mídia]'}</p>;
   }
@@ -168,6 +151,8 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
 }) {
   const [text, setText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
   const contact = conversations.find(c => c.remote_jid === selectedChat);
@@ -187,6 +172,16 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmoji]);
 
+  // Recording timer
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingTime(0);
+      return;
+    }
+    const interval = setInterval(() => setRecordingTime(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
   const handleSend = () => {
     if (!text.trim()) return;
     onSend(text.trim());
@@ -196,6 +191,18 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
 
   const onEmojiClick = (emojiData: any) => {
     setText(prev => prev + emojiData.emoji);
+  };
+
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  const handleMicClick = () => {
+    // Toggle recording visual state (actual audio send requires media API + Evolution audio endpoint)
+    setIsRecording(!isRecording);
+    if (isRecording) {
+      // Stop recording - in a full implementation, send the audio blob
+      onSend('🎤 [Áudio gravado]');
+      setIsRecording(false);
+    }
   };
 
   return (
@@ -218,8 +225,13 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4" style={{ background: 'var(--chat-bg, hsl(var(--muted)/0.3))' }}>
+      <ScrollArea className="flex-1 p-4">
         <div className="space-y-2 max-w-2xl mx-auto">
+          {messages.length === 0 && (
+            <div className="text-center text-muted-foreground text-sm py-8">
+              Nenhuma mensagem ainda. Envie a primeira!
+            </div>
+          )}
           {messages.map((msg) => (
             <MessageBubble key={msg.id} msg={msg} />
           ))}
@@ -227,7 +239,7 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
         </div>
       </ScrollArea>
 
-      {/* Input with emoji */}
+      {/* Input with emoji and mic */}
       <div className="relative p-3 border-t bg-card">
         {showEmoji && (
           <div ref={emojiRef} className="absolute bottom-full left-0 mb-2 z-50">
@@ -251,16 +263,37 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
           >
             {showEmoji ? <X className="h-5 w-5" /> : <Smile className="h-5 w-5" />}
           </Button>
-          <Input
-            placeholder="Digite uma mensagem..."
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            className="flex-1"
-          />
-          <Button onClick={handleSend} disabled={!text.trim()} size="icon" className="shrink-0">
-            <Send className="h-4 w-4" />
-          </Button>
+
+          {isRecording ? (
+            <div className="flex-1 flex items-center gap-3 px-3">
+              <div className="h-3 w-3 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm text-red-500 font-mono">{formatTime(recordingTime)}</span>
+              <span className="text-sm text-muted-foreground">Gravando...</span>
+            </div>
+          ) : (
+            <Input
+              placeholder="Digite uma mensagem..."
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+              className="flex-1"
+            />
+          )}
+
+          {text.trim() ? (
+            <Button onClick={handleSend} size="icon" className="shrink-0">
+              <Send className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant={isRecording ? 'destructive' : 'ghost'}
+              size="icon"
+              className="shrink-0"
+              onClick={handleMicClick}
+            >
+              {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-5 w-5" />}
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -296,7 +329,6 @@ export default function Atendimento() {
         </div>
       </div>
 
-      {/* State: Disconnected */}
       {(wpp.status === 'disconnected') && (
         <div className="card-elevated flex flex-col items-center justify-center p-16 text-center">
           <Phone className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -310,17 +342,14 @@ export default function Atendimento() {
         </div>
       )}
 
-      {/* State: Connecting (QR Code) */}
       {wpp.status === 'connecting' && (
         <div className="card-elevated">
           <QrCodeView qrCode={wpp.qrCode} onRefresh={wpp.refreshQrCode} loading={wpp.loading} />
         </div>
       )}
 
-      {/* State: Connected (Chat) */}
       {wpp.status === 'connected' && (
         <div className="card-elevated h-[calc(100vh-12rem)] flex overflow-hidden rounded-lg">
-          {/* Mobile: show list or chat */}
           <div className={`w-full md:w-80 shrink-0 ${wpp.selectedChat ? 'hidden md:flex md:flex-col' : 'flex flex-col'}`}>
             <ConversationList
               conversations={wpp.conversations}
