@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.vinculacao-whatsapp]
 verify_jwt = false
+
+[functions.notify-process-update]
+verify_jwt = false
