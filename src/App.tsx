@@ -18,6 +18,7 @@ import Configuracoes from "./pages/configuracoes/Configuracoes";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
 import CadastroAdvogado from "./pages/CadastroAdvogado";
 import AceitarConvite from "./pages/convite/AceitarConvite";
+import VincularWhatsApp from "./pages/vinculacao/VincularWhatsApp";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ function AppRoutes() {
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />} />
       <Route path="/cadastro/advogado" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <CadastroAdvogado />} />
       <Route path="/convite/:token" element={<AceitarConvite />} />
+      <Route path="/vincular" element={<VincularWhatsApp />} />
 
       {/* Protected app routes */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>

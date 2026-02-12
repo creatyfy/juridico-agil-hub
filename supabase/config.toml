@@ -14,3 +14,9 @@ verify_jwt = false
 
 [functions.evolution-webhook]
 verify_jwt = false
+
+[functions.gerar-convite-vinculacao]
+verify_jwt = false
+
+[functions.vinculacao-whatsapp]
+verify_jwt = false

@@ -1,7 +1,8 @@
 import { useParams, Link } from 'react-router-dom';
 import { useState } from 'react';
-import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -26,6 +27,13 @@ export default function ClienteDetail() {
   const [inviting, setInviting] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // WhatsApp vinculação state
+  const [vinculacaoOpen, setVinculacaoOpen] = useState(false);
+  const [vinculacaoProcesso, setVinculacaoProcesso] = useState<string | null>(null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [vinculacaoLink, setVinculacaoLink] = useState<string | null>(null);
+  const [vinculacaoCopied, setVinculacaoCopied] = useState(false);
 
   const processosVinculados = processos.filter(p => {
     const partes = Array.isArray(p.partes) ? p.partes : [];
@@ -98,6 +106,43 @@ export default function ClienteDetail() {
     setCopied(false);
   };
 
+  const handleGerarVinculacao = async () => {
+    if (!id || !vinculacaoProcesso) return;
+    setGeneratingLink(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('gerar-convite-vinculacao', {
+        body: { cliente_id: id, processo_id: vinculacaoProcesso },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (data?.token) {
+        const publishedUrl = import.meta.env.VITE_SITE_URL || 'https://juridico-agil-hub.lovable.app';
+        const link = `${publishedUrl}/vincular?token=${data.token}`;
+        setVinculacaoLink(link);
+        toast.success('Link de vinculação gerado!');
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao gerar link');
+    }
+    setGeneratingLink(false);
+  };
+
+  const copyVinculacaoLink = () => {
+    if (vinculacaoLink) {
+      navigator.clipboard.writeText(vinculacaoLink);
+      setVinculacaoCopied(true);
+      toast.success('Link copiado!');
+      setTimeout(() => setVinculacaoCopied(false), 2000);
+    }
+  };
+
+  const closeVinculacaoDialog = () => {
+    setVinculacaoOpen(false);
+    setVinculacaoProcesso(null);
+    setVinculacaoLink(null);
+    setVinculacaoCopied(false);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
@@ -152,11 +197,17 @@ export default function ClienteDetail() {
         </div>
       </div>
 
-      {/* Invite button - always visible */}
-      <Button onClick={() => setInviteOpen(true)} className="w-full sm:w-auto">
-        <Send className="h-4 w-4 mr-2" />
-        Convidar para acompanhar processo
-      </Button>
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-3">
+        <Button onClick={() => setInviteOpen(true)} variant="outline">
+          <Send className="h-4 w-4 mr-2" />
+          Convidar para acompanhar processo
+        </Button>
+        <Button onClick={() => setVinculacaoOpen(true)}>
+          <MessageCircle className="h-4 w-4 mr-2" />
+          Vincular WhatsApp (OTP)
+        </Button>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Contact info */}
@@ -319,6 +370,67 @@ export default function ClienteDetail() {
                 <Button onClick={handleInvite} disabled={!selectedProcesso || inviting}>
                   {inviting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
                   Enviar Convite
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* WhatsApp Vinculação Dialog */}
+      <Dialog open={vinculacaoOpen} onOpenChange={closeVinculacaoDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Vincular WhatsApp do cliente</DialogTitle>
+            <DialogDescription>
+              Gere um link seguro para {cliente.nome} validar seu número de WhatsApp via OTP e ativar o acompanhamento automático.
+            </DialogDescription>
+          </DialogHeader>
+
+          {vinculacaoLink ? (
+            <div className="space-y-4">
+              <div className="bg-muted/50 rounded-lg p-4 text-center space-y-3">
+                <MessageCircle className="h-8 w-8 text-accent mx-auto" />
+                <p className="text-sm font-medium">Link de vinculação gerado!</p>
+                <p className="text-xs text-muted-foreground">Envie este link ao cliente. Ele terá 24h para validar o número via OTP.</p>
+              </div>
+              <div className="flex gap-2">
+                <Input value={vinculacaoLink} readOnly className="text-xs font-mono" />
+                <Button size="icon" variant="outline" onClick={copyVinculacaoLink}>
+                  {vinculacaoCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeVinculacaoDialog}>Fechar</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {processosVinculados.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">Nenhum processo vinculado a este cliente.</p>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {processosVinculados.map(proc => (
+                    <button
+                      key={proc.id}
+                      onClick={() => setVinculacaoProcesso(proc.id)}
+                      className={`w-full text-left p-3 rounded-lg border transition-all ${
+                        vinculacaoProcesso === proc.id
+                          ? 'border-accent bg-accent/10'
+                          : 'hover:border-accent/40 hover:bg-accent/5 cursor-pointer'
+                      }`}
+                    >
+                      <p className="font-mono text-sm font-semibold">{proc.numero_cnj}</p>
+                      <p className="text-xs text-muted-foreground">{proc.classe}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={closeVinculacaoDialog}>Cancelar</Button>
+                <Button onClick={handleGerarVinculacao} disabled={!vinculacaoProcesso || generatingLink}>
+                  {generatingLink ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <MessageCircle className="h-4 w-4 mr-2" />}
+                  Gerar Link de Vinculação
                 </Button>
               </DialogFooter>
             </div>
