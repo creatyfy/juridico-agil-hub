@@ -135,6 +135,17 @@ export function useWhatsApp() {
 
   const loadMessages = useCallback(async (remoteJid: string) => {
     setSelectedChat(remoteJid);
+    // Try fetching from Evolution API first (has full history)
+    try {
+      const res = await callEvolution('fetch-messages', { remoteJid });
+      if (res.messages && res.messages.length > 0) {
+        setMessages(res.messages);
+        return;
+      }
+    } catch (e) {
+      console.error('fetch-messages error:', e);
+    }
+    // Fallback to DB
     const res = await callEvolution('messages', { remoteJid });
     setMessages(res.messages || []);
   }, []);
