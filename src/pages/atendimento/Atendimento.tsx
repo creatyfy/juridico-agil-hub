@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search } from 'lucide-react';
+import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useWhatsApp, type Conversation, type Message } from '@/hooks/useWhatsApp';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import EmojiPicker, { EmojiStyle, Theme } from 'emoji-picker-react';
 
 function StatusIndicator({ status }: { status: string }) {
   if (status === 'connected') return <Badge variant="default" className="bg-green-600"><Wifi className="h-3 w-3 mr-1" />Conectado</Badge>;
@@ -62,7 +63,7 @@ function ConversationList({ conversations, selectedChat, onSelect, searchTerm, o
 
   return (
     <div className="flex flex-col h-full border-r">
-      <div className="p-3 border-b">
+      <div className="p-3 border-b bg-card">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Buscar conversa..." value={searchTerm} onChange={e => onSearchChange(e.target.value)} className="pl-9" />
@@ -81,14 +82,17 @@ function ConversationList({ conversations, selectedChat, onSelect, searchTerm, o
               selectedChat === conv.remote_jid ? 'bg-accent' : ''
             }`}
           >
-            <Avatar className="h-10 w-10 shrink-0">
-              <AvatarFallback className="text-xs">{conv.nome.substring(0, 2).toUpperCase()}</AvatarFallback>
+            <Avatar className="h-12 w-12 shrink-0">
+              {conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome} />}
+              <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                {conv.nome.substring(0, 2).toUpperCase()}
+              </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
               <div className="flex justify-between items-baseline">
                 <span className="font-medium text-sm truncate">{conv.nome}</span>
                 <span className="text-[10px] text-muted-foreground shrink-0 ml-2">
-                  {format(new Date(conv.last_timestamp), 'HH:mm', { locale: ptBR })}
+                  {conv.last_timestamp ? format(new Date(conv.last_timestamp), 'HH:mm', { locale: ptBR }) : ''}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground truncate">
@@ -102,6 +106,59 @@ function ConversationList({ conversations, selectedChat, onSelect, searchTerm, o
   );
 }
 
+function MessageBubble({ msg }: { msg: Message }) {
+  const isOut = msg.direcao === 'out';
+  const tipo = msg.tipo || 'text';
+  
+  // Render content based on type
+  let content: React.ReactNode;
+  
+  if (tipo === 'image' || tipo === 'imageMessage') {
+    content = (
+      <div>
+        {msg.conteudo?.startsWith('http') ? (
+          <img src={msg.conteudo} alt="imagem" className="max-w-full rounded-md mb-1" />
+        ) : (
+          <p className="whitespace-pre-wrap break-words">📷 Imagem</p>
+        )}
+      </div>
+    );
+  } else if (tipo === 'sticker' || tipo === 'stickerMessage') {
+    content = (
+      <div>
+        {msg.conteudo?.startsWith('http') ? (
+          <img src={msg.conteudo} alt="figurinha" className="w-32 h-32 object-contain" />
+        ) : (
+          <p className="text-3xl">🏷️</p>
+        )}
+      </div>
+    );
+  } else if (tipo === 'audio' || tipo === 'audioMessage') {
+    content = <p className="whitespace-pre-wrap break-words">🎤 Áudio</p>;
+  } else if (tipo === 'video' || tipo === 'videoMessage') {
+    content = <p className="whitespace-pre-wrap break-words">🎥 Vídeo</p>;
+  } else if (tipo === 'document' || tipo === 'documentMessage') {
+    content = <p className="whitespace-pre-wrap break-words">📎 Documento</p>;
+  } else {
+    content = <p className="whitespace-pre-wrap break-words">{msg.conteudo || '[mídia]'}</p>;
+  }
+
+  return (
+    <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+        isOut
+          ? 'bg-primary text-primary-foreground rounded-br-none'
+          : 'bg-muted rounded-bl-none'
+      }`}>
+        {content}
+        <p className={`text-[10px] mt-1 text-right ${isOut ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+          {format(new Date(msg.timestamp), 'HH:mm')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
   messages: Message[];
   selectedChat: string;
@@ -110,17 +167,35 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
   onBack: () => void;
 }) {
   const [text, setText] = useState('');
+  const [showEmoji, setShowEmoji] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
   const contact = conversations.find(c => c.remote_jid === selectedChat);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Close emoji picker on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowEmoji(false);
+      }
+    }
+    if (showEmoji) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmoji]);
+
   const handleSend = () => {
     if (!text.trim()) return;
     onSend(text.trim());
     setText('');
+    setShowEmoji(false);
+  };
+
+  const onEmojiClick = (emojiData: any) => {
+    setText(prev => prev + emojiData.emoji);
   };
 
   return (
@@ -130,8 +205,11 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <Avatar className="h-9 w-9">
-          <AvatarFallback className="text-xs">{(contact?.nome || '?').substring(0, 2).toUpperCase()}</AvatarFallback>
+        <Avatar className="h-10 w-10">
+          {contact?.foto_url && <AvatarImage src={contact.foto_url} alt={contact.nome} />}
+          <AvatarFallback className="text-xs bg-primary/10 text-primary">
+            {(contact?.nome || '?').substring(0, 2).toUpperCase()}
+          </AvatarFallback>
         </Avatar>
         <div>
           <p className="font-medium text-sm">{contact?.nome || selectedChat.replace('@s.whatsapp.net', '')}</p>
@@ -140,38 +218,50 @@ function ChatView({ messages, selectedChat, conversations, onSend, onBack }: {
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 p-4" style={{ background: 'var(--chat-bg, hsl(var(--muted)/0.3))' }}>
         <div className="space-y-2 max-w-2xl mx-auto">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.direcao === 'out' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
-                msg.direcao === 'out'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              }`}>
-                <p className="whitespace-pre-wrap break-words">{msg.conteudo || '[mídia]'}</p>
-                <p className={`text-[10px] mt-1 ${msg.direcao === 'out' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                  {format(new Date(msg.timestamp), 'HH:mm')}
-                </p>
-              </div>
-            </div>
+            <MessageBubble key={msg.id} msg={msg} />
           ))}
           <div ref={scrollRef} />
         </div>
       </ScrollArea>
 
-      {/* Input */}
-      <div className="p-3 border-t flex gap-2">
-        <Input
-          placeholder="Digite uma mensagem..."
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-          className="flex-1"
-        />
-        <Button onClick={handleSend} disabled={!text.trim()} size="icon">
-          <Send className="h-4 w-4" />
-        </Button>
+      {/* Input with emoji */}
+      <div className="relative p-3 border-t bg-card">
+        {showEmoji && (
+          <div ref={emojiRef} className="absolute bottom-full left-0 mb-2 z-50">
+            <EmojiPicker
+              onEmojiClick={onEmojiClick}
+              emojiStyle={EmojiStyle.NATIVE}
+              theme={Theme.AUTO}
+              width={350}
+              height={400}
+              searchPlaceholder="Buscar emoji..."
+              lazyLoadEmojis
+            />
+          </div>
+        )}
+        <div className="flex gap-2 items-center">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            onClick={() => setShowEmoji(!showEmoji)}
+          >
+            {showEmoji ? <X className="h-5 w-5" /> : <Smile className="h-5 w-5" />}
+          </Button>
+          <Input
+            placeholder="Digite uma mensagem..."
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            className="flex-1"
+          />
+          <Button onClick={handleSend} disabled={!text.trim()} size="icon" className="shrink-0">
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
