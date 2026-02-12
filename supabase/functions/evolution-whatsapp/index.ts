@@ -61,10 +61,13 @@ Deno.serve(async (req) => {
         method: 'POST',
         headers: evoHeaders(),
         body: JSON.stringify({
-          url: webhookUrl,
-          webhook_by_events: false,
-          webhook_base64: false,
-          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            webhookByEvents: false,
+            webhookBase64: false,
+            events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+          }
         }),
       })
       const evoData = await evoRes.json()
@@ -83,33 +86,68 @@ Deno.serve(async (req) => {
         })
       }
       
-      // Get chats from Evolution API
-      const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instance.instance_name}`, {
-        method: 'POST',
-        headers: evoHeaders(),
-        body: JSON.stringify({}),
-      })
-      const chats = await evoRes.json()
-      console.log('Fetch chats response count:', Array.isArray(chats) ? chats.length : 'not array')
+      // Get chats from Evolution API - try multiple endpoints
+      let chats: any[] = []
       
-      if (!Array.isArray(chats)) {
-        return new Response(JSON.stringify({ conversations: [], raw: chats }), {
+      // Try POST /chat/findChats first (v2 format)
+      try {
+        const evoRes = await fetch(`${EVOLUTION_API_URL}/chat/findChats/${instance.instance_name}`, {
+          method: 'POST',
+          headers: evoHeaders(),
+          body: JSON.stringify({}),
+        })
+        const data = await evoRes.json()
+        console.log('findChats response:', JSON.stringify(data).substring(0, 500))
+        if (Array.isArray(data)) chats = data
+      } catch (e) {
+        console.error('findChats error:', e)
+      }
+
+      // If empty, try GET /chat/findContacts
+      if (chats.length === 0) {
+        try {
+          const evoRes2 = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${instance.instance_name}`, {
+            method: 'POST',
+            headers: evoHeaders(),
+            body: JSON.stringify({}),
+          })
+          const data2 = await evoRes2.json()
+          console.log('findContacts response:', JSON.stringify(data2).substring(0, 500))
+          if (Array.isArray(data2)) chats = data2
+        } catch (e) {
+          console.error('findContacts error:', e)
+        }
+      }
+
+      if (!Array.isArray(chats) || chats.length === 0) {
+        return new Response(JSON.stringify({ conversations: [], debug: 'no chats found from Evolution API' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
 
       // Map chats to conversations format
       const conversations = chats
-        .filter((c: any) => c.id && !c.id.includes('@g.us') && c.id !== 'status@broadcast')
-        .map((c: any) => ({
-          remote_jid: c.id,
-          nome: c.name || c.id?.replace('@s.whatsapp.net', '') || '',
-          numero: c.id?.replace('@s.whatsapp.net', '') || '',
-          foto_url: c.profilePictureUrl || null,
-          last_message: c.lastMsgContent || c.lastMessage?.message?.conversation || '',
-          last_timestamp: c.updatedAt || new Date().toISOString(),
-          direcao: 'in',
-        }))
+        .filter((c: any) => {
+          const jid = c.remoteJid || c.id
+          return jid && jid !== 'status@broadcast'
+        })
+        .map((c: any) => {
+          const jid = c.remoteJid || c.id
+          const isGroup = jid?.includes('@g.us')
+          const lastMsg = c.lastMessage?.message?.conversation 
+            || c.lastMessage?.message?.extendedTextMessage?.text
+            || c.lastMsgContent || ''
+          return {
+            remote_jid: jid,
+            nome: c.pushName || c.name || (isGroup ? jid : jid?.replace('@s.whatsapp.net', '')) || '',
+            numero: isGroup ? '' : jid?.replace('@s.whatsapp.net', '') || '',
+            foto_url: c.profilePicUrl || c.profilePictureUrl || null,
+            last_message: lastMsg,
+            last_timestamp: c.updatedAt || new Date().toISOString(),
+            direcao: 'in',
+            is_group: isGroup,
+          }
+        })
 
       return new Response(JSON.stringify({ conversations }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

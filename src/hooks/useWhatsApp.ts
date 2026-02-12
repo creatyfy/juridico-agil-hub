@@ -63,8 +63,8 @@ export function useWhatsApp() {
         setStatus('disconnected');
       } else if (res.status === 'connected') {
         setStatus('connected');
-        // Ensure webhook is configured when connected
-        callEvolution('set-webhook', undefined, {}).catch(() => {});
+        // Ensure webhook is configured when connected (fire and forget)
+        callEvolution('set-webhook', undefined, {}).catch(e => console.warn('set-webhook:', e));
       } else if (res.status === 'connecting') {
         setStatus('connecting');
       } else {
