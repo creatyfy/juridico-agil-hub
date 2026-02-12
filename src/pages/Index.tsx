@@ -35,7 +35,7 @@ const benefits = [
   
   { icon: <Shield className="h-5 w-5" />, text: 'Segurança e conformidade com a OAB' },
   { icon: <Zap className="h-5 w-5" />, text: 'Preparado para Inteligência Artificial' },
-  { icon: <CheckCircle2 className="h-5 w-5" />, text: 'Suporte dedicado e treinamento incluso' },
+  
 ];
 
 export default function LandingPage() {
