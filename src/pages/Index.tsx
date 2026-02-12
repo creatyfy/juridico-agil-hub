@@ -203,7 +203,7 @@ export default function LandingPage() {
               <div className="mt-8">
                 <Link to="/cadastro/advogado">
                   <Button className="btn-accent px-6">
-                    Experimente 14 dias grátis
+                    Experimente 30 dias grátis
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </Link>
@@ -235,7 +235,7 @@ export default function LandingPage() {
             Pronto para transformar seu escritório?
           </h2>
           <p className="text-primary-foreground/70 mb-10 max-w-lg mx-auto text-lg">
-            Experimente gratuitamente por 14 dias. Sem cartão de crédito. Sem compromisso.
+            Experimente gratuitamente por 30 dias. Sem cartão de crédito. Sem compromisso.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link to="/cadastro/advogado">
