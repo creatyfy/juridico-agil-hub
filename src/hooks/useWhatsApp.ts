@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -55,6 +55,12 @@ export function useWhatsApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const selectedChatRef = useRef<string | null>(null);
+
+  // Keep ref in sync
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -63,7 +69,6 @@ export function useWhatsApp() {
         setStatus('disconnected');
       } else if (res.status === 'connected') {
         setStatus('connected');
-        // Ensure webhook is configured when connected (fire and forget)
         callEvolution('set-webhook', undefined, {}).catch(e => console.warn('set-webhook:', e));
       } else if (res.status === 'connecting') {
         setStatus('connecting');
@@ -118,7 +123,6 @@ export function useWhatsApp() {
   }, []);
 
   const loadConversations = useCallback(async () => {
-    // Try to fetch chats directly from Evolution API first
     try {
       const res = await callEvolution('fetch-chats', undefined, {});
       if (res.conversations && res.conversations.length > 0) {
@@ -128,14 +132,12 @@ export function useWhatsApp() {
     } catch (e) {
       console.error('fetch-chats error:', e);
     }
-    // Fallback to DB-based conversations
     const res = await callEvolution('conversations');
     setConversations(res.conversations || []);
   }, []);
 
   const loadMessages = useCallback(async (remoteJid: string) => {
     setSelectedChat(remoteJid);
-    // Try fetching from Evolution API first (has full history)
     try {
       const res = await callEvolution('fetch-messages', { remoteJid });
       if (res.messages && res.messages.length > 0) {
@@ -145,18 +147,29 @@ export function useWhatsApp() {
     } catch (e) {
       console.error('fetch-messages error:', e);
     }
-    // Fallback to DB
     const res = await callEvolution('messages', { remoteJid });
     setMessages(res.messages || []);
   }, []);
 
   const sendMessage = useCallback(async (number: string, text: string) => {
-    await callEvolution('send', undefined, { number, text });
-    // Reload messages
-    if (selectedChat) {
-      await loadMessages(selectedChat);
+    // Optimistically add the message to the UI
+    const optimisticMsg: Message = {
+      id: crypto.randomUUID(),
+      remote_jid: number,
+      direcao: 'out',
+      conteudo: text,
+      tipo: 'text',
+      timestamp: new Date().toISOString(),
+      message_id: null,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+
+    try {
+      await callEvolution('send', undefined, { number, text });
+    } catch (e) {
+      console.error('Send error:', e);
     }
-  }, [selectedChat, loadMessages]);
+  }, []);
 
   // Check status on mount
   useEffect(() => {
@@ -182,24 +195,70 @@ export function useWhatsApp() {
     }
   }, [status, loadConversations]);
 
-  // Realtime subscription for new messages
+  // Realtime subscription for new messages - uses ref to avoid re-subscribing on chat change
   useEffect(() => {
     if (status !== 'connected') return;
 
     const channel = supabase
-      .channel('whatsapp-messages')
+      .channel('whatsapp-realtime')
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'whatsapp_mensagens',
-      }, () => {
-        loadConversations();
-        if (selectedChat) loadMessages(selectedChat);
+      }, (payload) => {
+        const newMsg = payload.new as any;
+        
+        // Update conversation list with the new message
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.remote_jid === newMsg.remote_jid);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = {
+              ...updated[idx],
+              last_message: newMsg.conteudo || '[mídia]',
+              last_timestamp: newMsg.timestamp,
+              direcao: newMsg.direcao,
+            };
+            // Re-sort by timestamp
+            updated.sort((a, b) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime());
+            return updated;
+          }
+          return prev;
+        });
+
+        // If this message belongs to the currently open chat, add it to messages
+        const currentChat = selectedChatRef.current;
+        if (currentChat && newMsg.remote_jid === currentChat) {
+          setMessages(prev => {
+            // Avoid duplicates by message_id
+            if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) {
+              return prev;
+            }
+            // Also avoid duplicates for optimistic messages (same content + direction within 10s)
+            if (newMsg.direcao === 'out') {
+              const recent = prev.filter(m => 
+                m.direcao === 'out' && 
+                m.conteudo === newMsg.conteudo &&
+                Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 10000
+              );
+              if (recent.length > 0) return prev;
+            }
+            return [...prev, {
+              id: newMsg.id,
+              remote_jid: newMsg.remote_jid,
+              direcao: newMsg.direcao,
+              conteudo: newMsg.conteudo,
+              tipo: newMsg.tipo,
+              timestamp: newMsg.timestamp,
+              message_id: newMsg.message_id,
+            }];
+          });
+        }
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [status, selectedChat, loadConversations, loadMessages]);
+  }, [status]);
 
   return {
     status,
