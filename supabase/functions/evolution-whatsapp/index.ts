@@ -266,7 +266,7 @@ Deno.serve(async (req) => {
           status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
-      const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`
+      const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/webhook-whatsapp`
       const evoRes = await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance.instance_name}`, {
         method: 'POST', headers: evoHeaders(),
         body: JSON.stringify({
@@ -450,7 +450,7 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS',
             webhook: {
-              url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/evolution-webhook`,
+              url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/webhook-whatsapp`,
               byEvents: false, base64: false,
               headers: { 'apikey': EVOLUTION_API_KEY },
               events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
