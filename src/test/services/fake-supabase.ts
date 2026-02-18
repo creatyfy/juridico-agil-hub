@@ -9,6 +9,14 @@ export type DbState = {
   webhook_replay_guard: Array<{ id: string; nonce_hash: string; timestamp_seconds: number; expires_at: string }>
 }
 
+type AtomicOptions = {
+  mode?: 'increment' | 'windowed_increment'
+  column?: string
+  initial?: number
+  windowSeconds?: number
+  now?: string
+}
+
 export function createDbState(): DbState {
   return {
     conversas: [],
@@ -76,30 +84,79 @@ class QueryBuilder {
     return this
   }
 
-  upsert(payload: any): Promise<{ data: any; error: any }> {
+  upsert(payload: any, options?: { onConflict?: string; atomic?: AtomicOptions }): Promise<{ data: any; error: any }> {
     const tableRows = this.getRows()
+    const conflictColumns = (options?.onConflict ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const inferredConflictColumns = conflictColumns.length
+      ? conflictColumns
+      : this.table === 'telefones'
+        ? ['tenant_id', 'numero']
+        : this.table === 'otp_validacoes'
+          ? ['tenant_id', 'telefone']
+          : this.table === 'whatsapp_auth_rate_limits'
+            ? ['tenant_id', 'scope_type', 'scope_hash']
+            : []
+
+    const idx = inferredConflictColumns.length
+      ? tableRows.findIndex((row: any) => inferredConflictColumns.every((column) => row[column] === payload[column]))
+      : -1
+
+    if (idx === -1) {
+      const inserted = { id: crypto.randomUUID(), ...payload }
+      tableRows.push(inserted)
+      return Promise.resolve({ data: inserted, error: null })
+    }
+
+    if (options?.atomic?.mode === 'increment') {
+      const column = options.atomic.column ?? 'counter'
+      const current = Number(tableRows[idx][column] ?? 0)
+      const incremented = current + 1
+      tableRows[idx] = { ...tableRows[idx], ...payload, [column]: incremented }
+      return Promise.resolve({ data: tableRows[idx], error: null })
+    }
+
+    if (options?.atomic?.mode === 'windowed_increment') {
+      const column = options.atomic.column ?? 'counter'
+      const now = new Date(options.atomic.now ?? new Date().toISOString())
+      const windowSeconds = options.atomic.windowSeconds ?? 300
+      const previousWindow = new Date(tableRows[idx].window_start)
+      const withinWindow = now.getTime() - previousWindow.getTime() <= windowSeconds * 1000
+
+      if (!withinWindow) {
+        tableRows[idx] = {
+          ...tableRows[idx],
+          ...payload,
+          [column]: options.atomic.initial ?? 1,
+          window_start: now.toISOString(),
+        }
+      } else {
+        tableRows[idx] = {
+          ...tableRows[idx],
+          ...payload,
+          [column]: Number(tableRows[idx][column] ?? 0) + 1,
+        }
+      }
+
+      return Promise.resolve({ data: tableRows[idx], error: null })
+    }
 
     if (this.table === 'telefones') {
-      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id && row.numero === payload.numero)
-      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
-      else tableRows.push(payload)
-      return Promise.resolve({ data: payload, error: null })
+      tableRows[idx] = { ...tableRows[idx], ...payload }
+      return Promise.resolve({ data: tableRows[idx], error: null })
     }
 
     if (this.table === 'otp_validacoes') {
-      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id && row.telefone === payload.telefone)
-      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
-      else tableRows.push({ id: crypto.randomUUID(), ...payload })
-      return Promise.resolve({ data: payload, error: null })
+      tableRows[idx] = { ...tableRows[idx], ...payload }
+      return Promise.resolve({ data: tableRows[idx], error: null })
     }
 
     if (this.table === 'whatsapp_auth_rate_limits') {
-      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id
-        && row.scope_type === payload.scope_type
-        && row.scope_hash === payload.scope_hash)
-      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
-      else tableRows.push({ id: crypto.randomUUID(), ...payload })
-      return Promise.resolve({ data: payload, error: null })
+      tableRows[idx] = { ...tableRows[idx], ...payload }
+      return Promise.resolve({ data: tableRows[idx], error: null })
     }
 
     return Promise.resolve({ data: payload, error: null })
