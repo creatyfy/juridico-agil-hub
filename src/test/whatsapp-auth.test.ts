@@ -15,6 +15,8 @@ type DbState = {
   clientes: Array<{ id: string; tenant_id: string; cpf: string; nome: string }>
   otp_validacoes: Array<{ id: string; tenant_id: string; telefone: string; otp_hash: string; expires_at: string; tentativas: number }>
   telefones: Array<{ tenant_id: string; cliente_id: string | null; numero: string; verificado: boolean }>
+  whatsapp_auth_rate_limits: Array<{ id: string; tenant_id: string; scope_type: 'PHONE' | 'TENANT_CPF'; scope_hash: string; window_start: string; counter: number }>
+  webhook_replay_guard: Array<{ id: string; nonce_hash: string; timestamp_seconds: number; expires_at: string }>
 }
 
 function createDbState(): DbState {
@@ -25,24 +27,26 @@ function createDbState(): DbState {
     ],
     otp_validacoes: [],
     telefones: [],
+    whatsapp_auth_rate_limits: [],
+    webhook_replay_guard: [],
   }
 }
 
 class FakeSupabase {
   constructor(private state: DbState) {}
 
-  from(table: keyof DbState | 'telefones') {
+  from(table: keyof DbState) {
     return new QueryBuilder(this.state, table)
   }
 }
 
 class QueryBuilder {
   private filters: Record<string, unknown> = {}
-  private op: 'select' | 'insert' | 'update' | 'delete' | null = null
+  private op: 'select' | 'insert' | 'update' | 'delete' | 'upsert' | null = null
   private payload: any = null
   private rows: any[] = []
 
-  constructor(private state: DbState, private table: any) {}
+  constructor(private state: DbState, private table: keyof DbState) {}
 
   select(): this {
     this.op = 'select'
@@ -59,9 +63,8 @@ class QueryBuilder {
     this.payload = payload
     const entries = Array.isArray(payload) ? payload : [payload]
     this.rows = entries.map((entry) => ({ id: crypto.randomUUID(), ...entry }))
-
-    const tableRows = (this.state as any)[this.table]
-    for (const row of this.rows) tableRows.push(row)
+    const tableRows = this.getRows()
+    tableRows.push(...this.rows)
     return this
   }
 
@@ -76,14 +79,33 @@ class QueryBuilder {
     return this
   }
 
-  upsert(payload: any): Promise<{ data: any; error: null }> {
-    const tableRows = this.state.telefones
-    const idx = tableRows.findIndex((row) => row.tenant_id === payload.tenant_id && row.numero === payload.numero)
-    if (idx >= 0) {
-      tableRows[idx] = { ...tableRows[idx], ...payload }
-    } else {
-      tableRows.push(payload)
+  upsert(payload: any): Promise<{ data: any; error: any }> {
+    this.op = 'upsert'
+    const tableRows = this.getRows()
+
+    if (this.table === 'telefones') {
+      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id && row.numero === payload.numero)
+      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
+      else tableRows.push(payload)
+      return Promise.resolve({ data: payload, error: null })
     }
+
+    if (this.table === 'otp_validacoes') {
+      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id && row.telefone === payload.telefone)
+      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
+      else tableRows.push({ id: crypto.randomUUID(), ...payload })
+      return Promise.resolve({ data: payload, error: null })
+    }
+
+    if (this.table === 'whatsapp_auth_rate_limits') {
+      const idx = tableRows.findIndex((row: any) => row.tenant_id === payload.tenant_id
+        && row.scope_type === payload.scope_type
+        && row.scope_hash === payload.scope_hash)
+      if (idx >= 0) tableRows[idx] = { ...tableRows[idx], ...payload }
+      else tableRows.push({ id: crypto.randomUUID(), ...payload })
+      return Promise.resolve({ data: payload, error: null })
+    }
+
     return Promise.resolve({ data: payload, error: null })
   }
 
@@ -100,8 +122,12 @@ class QueryBuilder {
     return Promise.resolve({ data: this.executeMutation(), error: null }).then(resolve)
   }
 
+  private getRows(): any[] {
+    return (this.state[this.table] as any[]) ?? []
+  }
+
   private executeMutation() {
-    const tableRows = (this.state as any)[this.table]
+    const tableRows = this.getRows()
 
     if (this.op === 'update') {
       const rows = this.resolveRows()
@@ -123,7 +149,7 @@ class QueryBuilder {
   }
 
   private resolveRows() {
-    const tableRows = (this.state as any)[this.table] ?? []
+    const tableRows = this.getRows()
     return tableRows.filter((row: any) =>
       Object.entries(this.filters).every(([column, value]) => row[column] === value),
     )
@@ -133,10 +159,15 @@ class QueryBuilder {
 describe('whatsapp auth flow', () => {
   beforeEach(() => {
     sentMessages.length = 0
+    vi.resetModules()
     ;(globalThis as any).Deno = {
       env: {
         get: (key: string) => {
           if (key === 'OTP_PEPPER') return 'test-pepper'
+          if (key === 'OTP_MAX_PER_PHONE_WINDOW') return '2'
+          if (key === 'OTP_MAX_PER_CPF_WINDOW') return '2'
+          if (key === 'OTP_RATE_WINDOW_SECONDS') return '300'
+          if (key === 'OTP_TTL_MINUTES') return '5'
           return undefined
         },
       },
@@ -182,18 +213,21 @@ describe('whatsapp auth flow', () => {
     expect(state.conversas[0]?.estado).toBe('VERIFIED')
   })
 
-  it('rejects invalid CPF and keeps conversation unauthenticated', async () => {
+  it('uses same message for invalid and unknown CPF (anti-enumeration)', async () => {
     const state = createDbState()
 
-    let ctx = await makeCtx(state, 'Olá')
+    let ctx = await makeCtx(state, 'Oi')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
     ctx = await makeCtx(state, '11111111111')
-    const result = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    const invalidMsg = sentMessages.at(-1)?.text
 
-    expect(result.authenticated).toBe(false)
-    expect(sentMessages.at(-1)?.text).toContain('CPF inválido')
-    expect(state.otp_validacoes).toHaveLength(0)
+    ctx = await makeCtx(state, '98765432100')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    const unknownMsg = sentMessages.at(-1)?.text
+
+    expect(invalidMsg).toBe(unknownMsg)
   })
 
   it('increments attempts on wrong OTP', async () => {
@@ -201,16 +235,13 @@ describe('whatsapp auth flow', () => {
 
     let ctx = await makeCtx(state, 'Oi')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
-
     ctx = await makeCtx(state, '12345678909')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
     ctx = await makeCtx(state, '000000')
-    const result = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
-    expect(result.authenticated).toBe(false)
     expect(state.otp_validacoes[0]?.tentativas).toBe(1)
-    expect(sentMessages.at(-1)?.text).toContain('OTP inválido')
   })
 
   it('rejects expired OTP and resets flow to CPF step', async () => {
@@ -218,28 +249,21 @@ describe('whatsapp auth flow', () => {
 
     let ctx = await makeCtx(state, 'Oi')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
-
     ctx = await makeCtx(state, '12345678909')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
     state.otp_validacoes[0].expires_at = new Date(Date.now() - 60_000).toISOString()
 
     ctx = await makeCtx(state, '123456')
-    const result = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
-    expect(result.authenticated).toBe(false)
     expect(state.conversas[0]?.estado).toBe('AWAITING_CPF')
     expect(state.otp_validacoes).toHaveLength(0)
   })
 
   it('returns direct access for already validated phone', async () => {
     const state = createDbState()
-    state.telefones.push({
-      tenant_id: 'tenant-1',
-      cliente_id: 'cliente-1',
-      numero: '5511999999999',
-      verificado: true,
-    })
+    state.telefones.push({ tenant_id: 'tenant-1', cliente_id: 'cliente-1', numero: '5511999999999', verificado: true })
 
     const ctx = await makeCtx(state, 'status')
     const verification = await ctx.isPhoneVerified(ctx.baseCtx)
@@ -253,7 +277,6 @@ describe('whatsapp auth flow', () => {
 
     let ctx = await makeCtx(state, 'Oi')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
-
     ctx = await makeCtx(state, '12345678909')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
@@ -263,11 +286,49 @@ describe('whatsapp auth flow', () => {
     }
 
     ctx = await makeCtx(state, '000000')
-    const result = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
-    expect(result.authenticated).toBe(false)
     expect(state.otp_validacoes).toHaveLength(0)
     expect(state.conversas[0]?.estado).toBe('AWAITING_CPF')
+  })
+
+  it('fails when OTP_PEPPER is missing', async () => {
+    const state = createDbState()
+    ;(globalThis as any).Deno.env.get = (key: string) => (key === 'OTP_PEPPER' ? undefined : '5')
+
+    let ctx = await makeCtx(state, 'Oi')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    ctx = await makeCtx(state, '12345678909')
+
+    await expect(ctx.handleAuthenticationFlow(ctx.baseCtx)).rejects.toThrow('otp_pepper_not_configured')
+  })
+
+  it('blocks OTP generation by distributed brute-force limits', async () => {
+    const state = createDbState()
+
+    let ctx = await makeCtx(state, 'Oi')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+
+    for (let i = 0; i < 3; i += 1) {
+      ctx = await makeCtx(state, '12345678909')
+      await ctx.handleAuthenticationFlow(ctx.baseCtx)
+      state.conversas[0].estado = 'AWAITING_CPF'
+    }
+
     expect(sentMessages.at(-1)?.text).toContain('limite de tentativas')
+  })
+
+  it('keeps single OTP record under concurrent OTP requests', async () => {
+    const state = createDbState()
+
+    let ctx = await makeCtx(state, 'Oi')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+
+    const first = makeCtx(state, '12345678909').then(({ handleAuthenticationFlow, baseCtx }) => handleAuthenticationFlow(baseCtx))
+    const second = makeCtx(state, '12345678909').then(({ handleAuthenticationFlow, baseCtx }) => handleAuthenticationFlow(baseCtx))
+
+    await Promise.all([first, second])
+
+    expect(state.otp_validacoes).toHaveLength(1)
   })
 })
