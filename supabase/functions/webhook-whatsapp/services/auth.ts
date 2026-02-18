@@ -2,7 +2,7 @@ import { sendWhatsAppText } from './evolution.ts'
 import { logInfo } from './logger.ts'
 import type { RequestContext, ConversationState } from './types.ts'
 
-const OTP_TTL_MINUTES = 10
+const OTP_TTL_MINUTES = 5
 const OTP_MAX_ATTEMPTS = 3
 
 function normalizeCpf(value: string): string {
@@ -33,11 +33,25 @@ function generateOtpCode(): string {
 }
 
 async function hashOtp(tenantId: string, phone: string, otp: string): Promise<string> {
-  const pepper = Deno.env.get('OTP_PEPPER') ?? 'local-pepper'
+  const pepper = Deno.env.get('OTP_PEPPER')
+  if (!pepper) {
+    throw new Error('otp_pepper_not_configured')
+  }
   const content = `${tenantId}:${phone}:${otp}:${pepper}`
   const bytes = new TextEncoder().encode(content)
   const digest = await crypto.subtle.digest('SHA-256', bytes)
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+
+  let mismatch = 0
+  for (let i = 0; i < a.length; i += 1) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+
+  return mismatch === 0
 }
 
 async function getOrCreateConversation(ctx: RequestContext): Promise<{ id: string; estado: ConversationState; cliente_id: string | null }> {
@@ -127,7 +141,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
       .update({ estado: 'AWAITING_OTP', cliente_id: cliente.id, ultima_interacao: new Date().toISOString() })
       .eq('id', conversation.id)
 
-    await sendWhatsAppText(ctx.instanceName, ctx.phone, `Seu código de verificação é: ${otp}. Ele expira em 10 minutos.`)
+    await sendWhatsAppText(ctx.instanceName, ctx.phone, `Seu código de verificação é: ${otp}. Ele expira em 5 minutos.`)
     return { authenticated: false, clienteId: null }
   }
 
@@ -159,8 +173,14 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
       return { authenticated: false, clienteId: null }
     }
 
-    const incomingHash = await hashOtp(ctx.tenantId, ctx.phone, ctx.message.replace(/\D/g, ''))
-    if (incomingHash !== otpRecord.otp_hash) {
+    const incomingOtp = ctx.message.replace(/\D/g, '')
+    if (!/^\d{6}$/.test(incomingOtp)) {
+      await sendWhatsAppText(ctx.instanceName, ctx.phone, 'OTP inválido. Envie exatamente os 6 dígitos do código recebido.')
+      return { authenticated: false, clienteId: null }
+    }
+
+    const incomingHash = await hashOtp(ctx.tenantId, ctx.phone, incomingOtp)
+    if (!timingSafeEqual(incomingHash, otpRecord.otp_hash)) {
       await ctx.supabase
         .from('otp_validacoes')
         .update({ tentativas: otpRecord.tentativas + 1 })
