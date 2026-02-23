@@ -2,6 +2,7 @@ import { logError } from './logger.ts'
 
 const EVOLUTION_API_URL = Deno.env.get('EVOLUTION_API_URL')
 const EVOLUTION_API_KEY = Deno.env.get('EVOLUTION_API_KEY')
+const EVOLUTION_TIMEOUT_MS = Number(Deno.env.get('EVOLUTION_TIMEOUT_MS') ?? '10000')
 
 function headers() {
   return {
@@ -21,15 +22,28 @@ export async function sendWhatsAppText(instanceName: string, phone: string, text
   }
 
   const number = normalizePhone(phone)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort('timeout'), EVOLUTION_TIMEOUT_MS)
 
-  const response = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instanceName}`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify({ number, text }),
-  })
+  try {
+    const response = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instanceName}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ number, text }),
+      signal: controller.signal,
+    })
 
-  if (!response.ok) {
-    const detail = await response.text()
-    logError('evolution_send_failed', { instanceName, number, status: response.status, detail })
+    if (!response.ok) {
+      const detail = await response.text()
+      logError('evolution_send_failed', { instanceName, number, status: response.status, detail })
+    }
+  } catch (error) {
+    logError('evolution_send_exception', {
+      instanceName,
+      number,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  } finally {
+    clearTimeout(timeout)
   }
 }

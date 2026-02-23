@@ -3,9 +3,9 @@ import { buildIdempotencyKey } from '../../supabase/functions/_shared/outbox'
 import { decideOutboxOutcome } from '../../supabase/functions/_shared/outbox-worker-logic'
 
 describe('outbox resilience', () => {
-  it('envio normal marca como sent', () => {
+  it('aceite do provedor marca como accepted', () => {
     const decision = decideOutboxOutcome({ attempts: 1, maxAttempts: 5, httpStatus: 200 })
-    expect(decision).toEqual({ action: 'sent' })
+    expect(decision).toEqual({ action: 'accepted' })
   })
 
   it('429 agenda retry com backoff', () => {
@@ -22,9 +22,9 @@ describe('outbox resilience', () => {
     expect(decision.action).toBe('retry')
   })
 
-  it('falha permanente de negócio (4xx) não retry', () => {
+  it('falha permanente de negócio (4xx) vira dead letter', () => {
     const decision = decideOutboxOutcome({ attempts: 1, maxAttempts: 5, httpStatus: 422 })
-    expect(decision).toEqual({ action: 'failed', reason: 'http_422' })
+    expect(decision).toEqual({ action: 'dead_letter', reason: 'http_422' })
   })
 
   it('idempotência é determinística e não duplica chave', async () => {
@@ -41,7 +41,7 @@ describe('outbox resilience', () => {
   })
 
   it('rate limit bloqueia envio e agenda retry', () => {
-    const decision = decideOutboxOutcome({ attempts: 1, maxAttempts: 5, tenantRateLimited: true })
+    const decision = decideOutboxOutcome({ attempts: 1, maxAttempts: 5, rateLimited: true })
     expect(decision.action).toBe('retry')
     if (decision.action === 'retry') {
       expect(decision.reason).toBe('rate_limit')
