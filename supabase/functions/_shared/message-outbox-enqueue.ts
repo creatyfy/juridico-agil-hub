@@ -21,7 +21,7 @@ export type EnqueueMessageInput = {
 
 export type EnqueueMessageResult = {
   ok: boolean
-  status: 'queued' | 'duplicate' | 'rate_limited' | 'instance_disconnected' | 'error'
+  status: 'queued' | 'duplicate' | 'rate_limited' | 'instance_disconnected' | 'tenant_degraded' | 'error'
   idempotencyKey: string
   outboxId?: string
   reason?: string
@@ -54,6 +54,38 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
       status: 'duplicate',
       idempotencyKey,
       outboxId: existing.id,
+    }
+  }
+
+  const { data: tenantState, error: tenantStateError } = await input.supabase
+    .from('tenants')
+    .select('status')
+    .eq('id', input.tenantId)
+    .maybeSingle()
+
+  if (tenantStateError) {
+    return {
+      ok: false,
+      status: 'error',
+      idempotencyKey,
+      reason: tenantStateError.message,
+    }
+  }
+
+  if (tenantState?.status && tenantState.status !== 'active') {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'enqueue_fail_fast_tenant_not_active',
+      tenant_id: input.tenantId,
+      tenant_status: tenantState.status,
+      error: 'tenant_degraded',
+    }))
+
+    return {
+      ok: false,
+      status: 'tenant_degraded',
+      idempotencyKey,
+      reason: 'tenant_degraded',
     }
   }
 
