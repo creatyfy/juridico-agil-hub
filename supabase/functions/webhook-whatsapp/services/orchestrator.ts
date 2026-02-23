@@ -1,5 +1,5 @@
 import { classifyMessage, explainMovement } from './ai.ts'
-import { sendWhatsAppText } from './evolution.ts'
+import { enqueueWhatsAppText } from './outbox.ts'
 import { logError, logInfo } from './logger.ts'
 import type { RequestContext } from './types.ts'
 
@@ -70,38 +70,39 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
 
     if (classification.intencao === 'RECLAMACAO') {
       await registerEscalation(ctx, ctx.clienteId, 'RECLAMACAO', { classification })
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, 'Recebemos sua reclamação. Vamos encaminhar para um advogado responsável agora mesmo.')
+      await enqueueWhatsAppText(ctx, 'Recebemos sua reclamação. Vamos encaminhar para um advogado responsável agora mesmo.', 'orchestrator', `reclamacao:${ctx.clienteId}:${ctx.message}`)
       return
     }
 
     if (classification.intencao === 'MARCAR_CONSULTORIA') {
       await registerEscalation(ctx, ctx.clienteId, 'MARCAR_CONSULTORIA', { classification })
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, 'Recebemos seu pedido de consultoria. Um atendente humano entrará em contato para agendamento.')
+      await enqueueWhatsAppText(ctx, 'Recebemos seu pedido de consultoria. Um atendente humano entrará em contato para agendamento.', 'orchestrator', `consultoria:${ctx.clienteId}:${ctx.message}`)
       return
     }
 
     if (classification.intencao === 'CONSULTAR_STATUS' && !shouldEscalate) {
       const movement = await fetchLastMovement(ctx, ctx.clienteId)
       if (!movement) {
-        await sendWhatsAppText(ctx.instanceName, ctx.phone, 'No momento não encontramos nova movimentação relevante no seu processo.')
+        await enqueueWhatsAppText(ctx, 'No momento não encontramos nova movimentação relevante no seu processo.', 'orchestrator', `status_sem_movimento:${ctx.clienteId}`)
         return
       }
 
       const explanation = await explainMovement(movement)
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, explanation)
+      await enqueueWhatsAppText(ctx, explanation, 'orchestrator', `status_explanation:${ctx.clienteId}:${movement}`)
       return
     }
 
     if (shouldEscalate || classification.intencao === 'FALAR_COM_ADVOGADO') {
       await registerEscalation(ctx, ctx.clienteId, 'ESCALATION', { classification })
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, 'Vou encaminhar sua mensagem para um advogado do time seguir com você.')
+      await enqueueWhatsAppText(ctx, 'Vou encaminhar sua mensagem para um advogado do time seguir com você.', 'orchestrator', `escalation:${ctx.clienteId}:${ctx.message}`)
       return
     }
 
-    await sendWhatsAppText(
-      ctx.instanceName,
-      ctx.phone,
+    await enqueueWhatsAppText(
+      ctx,
       'Entendi sua mensagem. Posso ajudar com status do processo ou encaminhar para um advogado quando você preferir.',
+      'orchestrator',
+      `fallback_help:${ctx.clienteId}:${classification.intencao}`
     )
   } catch (error) {
     logError('orchestrator_failed', {
@@ -111,10 +112,11 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
       error: String(error),
     })
 
-    await sendWhatsAppText(
-      ctx.instanceName,
-      ctx.phone,
+    await enqueueWhatsAppText(
+      ctx,
       'Tivemos uma instabilidade na IA. Já encaminhamos para atendimento humano continuar com você.',
+      'orchestrator',
+      `ai_fallback:${ctx.clienteId}:${ctx.requestId}`
     )
 
     await registerEscalation(ctx, ctx.clienteId, 'AI_FALLBACK', { error: String(error) })

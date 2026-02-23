@@ -1,4 +1,4 @@
-import { sendWhatsAppText } from './evolution.ts'
+import { enqueueWhatsAppText } from './outbox.ts'
 import { logInfo } from './logger.ts'
 import { AUTH_MESSAGES, OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './messages.ts'
 import {
@@ -95,7 +95,7 @@ async function requestOtpForCustomer(ctx: RequestContext, conversation: Conversa
   const canIssueByCpf = await enforceScopedRateLimit(ctx, 'TENANT_CPF', cpf, OTP_MAX_PER_CPF_WINDOW)
 
   if (!canIssueByPhone || !canIssueByCpf) {
-    await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_LOCKED)
+    await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_LOCKED, 'auth', `otp_locked:${conversation.id}`)
     return
   }
 
@@ -119,7 +119,7 @@ async function requestOtpForCustomer(ctx: RequestContext, conversation: Conversa
     .update({ estado: 'AWAITING_OTP', cliente_id: clienteId, ultima_interacao: new Date().toISOString() })
     .eq('id', conversation.id)
 
-  await sendWhatsAppText(ctx.instanceName, ctx.phone, `${AUTH_MESSAGES.OTP_SENT} Código: ${otp}`)
+  await enqueueWhatsAppText(ctx, `${AUTH_MESSAGES.OTP_SENT} Código: ${otp}`, 'auth', `otp_sent:${conversation.id}:${expiresAt}`)
 
   logInfo('otp_issued', {
     request_id: ctx.requestId,
@@ -162,7 +162,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
       .update({ estado: 'AWAITING_CPF', ultima_interacao: new Date().toISOString() })
       .eq('id', conversation.id)
 
-    await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.ASK_CPF)
+    await enqueueWhatsAppText(ctx, AUTH_MESSAGES.ASK_CPF, 'auth', `ask_cpf:${conversation.id}`)
     return { authenticated: false, clienteId: null }
   }
 
@@ -180,7 +180,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
       : { data: null }
 
     if (!cpfValid || !cliente) {
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.INVALID_OR_UNKNOWN_CPF)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.INVALID_OR_UNKNOWN_CPF, 'auth', `invalid_cpf:${conversation.id}:${ctx.message}`)
       return { authenticated: false, clienteId: null }
     }
 
@@ -191,7 +191,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
   if (conversation.estado === 'AWAITING_OTP') {
     const incomingOtp = normalizeOtp(ctx.message)
     if (!/^\d{6}$/.test(incomingOtp)) {
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_FORMAT)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_FORMAT, 'auth', `otp_format:${conversation.id}`)
       return { authenticated: false, clienteId: null }
     }
 
@@ -204,19 +204,19 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
 
     if (!otpRecord) {
       await resetOtpFlow(ctx, conversation.id)
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_EXPIRED)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_EXPIRED, 'auth', `otp_expired:${conversation.id}`)
       return { authenticated: false, clienteId: null }
     }
 
     if (new Date(otpRecord.expires_at).getTime() < Date.now()) {
       await resetOtpFlow(ctx, conversation.id, otpRecord.id)
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_EXPIRED)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_EXPIRED, 'auth', `otp_expired:${conversation.id}`)
       return { authenticated: false, clienteId: null }
     }
 
     if (otpRecord.tentativas >= OTP_MAX_ATTEMPTS) {
       await resetOtpFlow(ctx, conversation.id, otpRecord.id)
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_LOCKED)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_LOCKED, 'auth', `otp_locked:${conversation.id}`)
       return { authenticated: false, clienteId: null }
     }
 
@@ -227,7 +227,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
         .update({ tentativas: otpRecord.tentativas + 1 })
         .eq('id', otpRecord.id)
 
-      await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.OTP_INVALID)
+      await enqueueWhatsAppText(ctx, AUTH_MESSAGES.OTP_INVALID, 'auth', `otp_invalid:${conversation.id}:${otpRecord.tentativas + 1}`)
       return { authenticated: false, clienteId: null }
     }
 
@@ -245,7 +245,7 @@ export async function handleAuthenticationFlow(ctx: RequestContext): Promise<{ a
       .update({ estado: 'VERIFIED', ultima_interacao: new Date().toISOString() })
       .eq('id', conversation.id)
 
-    await sendWhatsAppText(ctx.instanceName, ctx.phone, AUTH_MESSAGES.VERIFIED)
+    await enqueueWhatsAppText(ctx, AUTH_MESSAGES.VERIFIED, 'auth', `verified:${conversation.id}`)
 
     logInfo('auth_verified', { request_id: ctx.requestId, tenant_id: ctx.tenantId, telefone: ctx.phone })
     return { authenticated: true, clienteId: conversation.cliente_id }

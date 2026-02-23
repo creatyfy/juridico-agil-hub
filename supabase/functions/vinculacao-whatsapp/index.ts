@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { enqueueMessage } from "../_shared/message-outbox-enqueue.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,12 +7,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL")!;
-const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY")!;
-
-function evoHeaders() {
-  return { "Content-Type": "application/json", apikey: EVOLUTION_API_KEY };
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -140,7 +135,7 @@ Deno.serve(async (req) => {
       // Find advogado's WhatsApp instance to send from
       const { data: instance } = await svc
         .from("whatsapp_instancias")
-        .select("instance_name, status")
+        .select("id, instance_name, status")
         .eq("user_id", convite.advogado_user_id)
         .eq("status", "connected")
         .order("created_at", { ascending: false })
@@ -154,39 +149,51 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Send OTP via Evolution API
       const whatsappNumber = cleanNumber.startsWith("55") ? cleanNumber : `55${cleanNumber}`;
-      const jid = `${whatsappNumber}@s.whatsapp.net`;
+      const messageText = `🔐 Seu código de confirmação para ativar o acompanhamento do processo é: *${otp}*
 
-      try {
-        const evoRes = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`, {
-          method: "POST",
-          headers: evoHeaders(),
-          body: JSON.stringify({
-            number: jid,
-            text: `🔐 Seu código de confirmação para ativar o acompanhamento do processo é: *${otp}*\n\nEste código expira em 5 minutos.`,
-          }),
-        });
+Este código expira em 5 minutos.`;
 
-        if (!evoRes.ok) {
-          const errData = await evoRes.text();
-          console.error("Evolution API error:", errData);
-          return new Response(JSON.stringify({ error: "Falha ao enviar mensagem via WhatsApp" }), {
-            status: 502,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
+      const enqueue = await enqueueMessage({
+        supabase: svc,
+        tenantId: convite.advogado_user_id,
+        destination: whatsappNumber,
+        event: 'vinculacao_otp',
+        reference: `${convite.id}:${convite.cliente_id}:${otp}`,
+        aggregateType: 'convite_vinculacao',
+        aggregateId: convite.id,
+        payload: {
+          kind: 'vinculacao_otp',
+          destinationNumber: whatsappNumber,
+          messageText,
+          instanceName: instance.instance_name,
+          instanceId: instance.id,
+          userId: convite.advogado_user_id,
+        },
+      });
 
-        console.log(`OTP sent to ${whatsappNumber} via instance ${instance.instance_name}`);
-      } catch (e) {
-        console.error("Evolution API call failed:", e);
-        return new Response(JSON.stringify({ error: "Erro ao conectar com WhatsApp" }), {
-          status: 502,
+      if (enqueue.status === 'instance_disconnected') {
+        return new Response(JSON.stringify({ error: "WhatsApp do escritório desconectado" }), {
+          status: 409,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      return new Response(JSON.stringify({ success: true, message: "Código enviado via WhatsApp" }), {
+      if (enqueue.status === 'rate_limited') {
+        return new Response(JSON.stringify({ error: "Limite de envio atingido, tente novamente em instantes" }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (!enqueue.ok) {
+        return new Response(JSON.stringify({ error: "Falha ao enfileirar mensagem OTP" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true, message: "Código enfileirado para envio via WhatsApp", status: enqueue.status }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

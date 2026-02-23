@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { enqueueMessage } from '../_shared/message-outbox-enqueue.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -558,36 +559,55 @@ Deno.serve(async (req) => {
 
       const body = await req.json()
       const { number, text } = body
+      if (!number || !text) {
+        return new Response(JSON.stringify({ error: 'number e text são obrigatórios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
 
-      const evoRes = await fetch(
-        `${EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`,
-        { method: 'POST', headers: evoHeaders(), body: JSON.stringify({ number, text }) }
-      )
-      const evoData = await evoRes.json()
-
-      const remoteJid = number.includes('@') ? number : `${number}@s.whatsapp.net`
-
-      // Save sent message
-      await supabase.from('whatsapp_mensagens').insert({
-        instancia_id: instance.id,
-        remote_jid: remoteJid,
-        direcao: 'out',
-        conteudo: text,
-        tipo: 'text',
-        message_id: evoData.key?.id || crypto.randomUUID(),
+      const enqueue = await enqueueMessage({
+        supabase: getServiceSupabase(),
+        tenantId: user.id,
+        destination: number,
+        event: 'manual_chat',
+        reference: `${instance.id}:${number}:${text}`,
+        aggregateType: 'chat',
+        aggregateId: instance.id,
+        payload: {
+          kind: 'manual_chat',
+          destinationNumber: number,
+          messageText: text,
+          instanceName: instance.instance_name,
+          instanceId: instance.id,
+          userId: user.id,
+        },
       })
 
-      // Update chat cache
-      const svc = getServiceSupabase()
-      await svc.from('whatsapp_chats_cache').upsert({
-        instancia_id: instance.id,
-        remote_jid: remoteJid,
-        ultima_mensagem: text,
-        ultimo_timestamp: new Date().toISOString(),
-        direcao: 'out',
-      }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+      if (enqueue.status === 'instance_disconnected') {
+        return new Response(JSON.stringify({ success: false, error: 'WhatsApp não conectado' }), {
+          status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
 
-      return new Response(JSON.stringify({ success: true, data: evoData }), {
+      if (enqueue.status === 'rate_limited') {
+        return new Response(JSON.stringify({ success: false, error: 'Rate limit de envio atingido', status: 'rate_limited' }), {
+          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      if (!enqueue.ok) {
+        return new Response(JSON.stringify({ success: false, error: enqueue.reason || 'Falha ao enfileirar mensagem' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        status: 'queued',
+        queue_status: enqueue.status,
+        idempotency_key: enqueue.idempotencyKey,
+        outbox_id: enqueue.outboxId,
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }

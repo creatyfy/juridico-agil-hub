@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.25.76";
-import { buildIdempotencyKey, type OutboxPayload } from "../_shared/outbox.ts";
+import { type OutboxPayload } from "../_shared/outbox.ts";
+import { enqueueMessage } from "../_shared/message-outbox-enqueue.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -97,19 +98,12 @@ serve(async (req: Request) => {
       `Para mais informações, entre em contato com seu advogado.\n\n` +
       `_Mensagem automática - Jarvis Jud_`;
 
-    const enqueued: Array<{ cliente: string; status: string }> = []
+    const enqueued: Array<{ cliente: string; status: string; idempotency_key?: string }> = []
 
     for (const cliente of clientesAtivos) {
       const number = cliente.numero_whatsapp.startsWith('55')
         ? cliente.numero_whatsapp
         : `55${cliente.numero_whatsapp}`;
-
-      const idempotencyKey = await buildIdempotencyKey({
-        tenantId: user.id,
-        event: 'process_update',
-        destination: number,
-        reference: `${processo.id}:${mensagem_personalizada ?? ''}`,
-      })
 
       const payload: OutboxPayload = {
         kind: 'process_update',
@@ -123,36 +117,40 @@ serve(async (req: Request) => {
         userId: user.id,
       }
 
-      const { error: enqueueError } = await svc.from('message_outbox').upsert({
-        tenant_id: user.id,
-        aggregate_type: 'processo',
-        aggregate_id: processo.id,
-        idempotency_key: idempotencyKey,
+      const enqueue = await enqueueMessage({
+        supabase: svc,
+        tenantId: user.id,
+        destination: number,
         payload,
-        status: 'pending',
-      }, { onConflict: 'tenant_id,idempotency_key', ignoreDuplicates: true })
+        event: 'process_update',
+        reference: `${processo.id}:${mensagem_personalizada ?? ''}:${cliente.id}`,
+        aggregateType: 'processo',
+        aggregateId: processo.id,
+      })
 
-      if (enqueueError) {
-        console.error('erro ao enfileirar', enqueueError)
-        enqueued.push({ cliente: cliente.nome, status: 'erro' })
+      if (!enqueue.ok) {
+        console.error('erro ao enfileirar', enqueue.reason)
+        enqueued.push({ cliente: cliente.nome, status: enqueue.status, idempotency_key: enqueue.idempotencyKey })
         continue
       }
 
-      await svc.from('notificacoes').insert({
-        user_id: user.id,
-        tipo: 'sistema',
-        titulo: `Envio enfileirado para ${cliente.nome}`,
-        mensagem: `Atualização processual enfileirada para envio via worker (processo ${processo.numero_cnj}).`,
-        link: `/processos/${processo.id}`,
-      })
+      if (enqueue.status === 'queued') {
+        await svc.from('notificacoes').insert({
+          user_id: user.id,
+          tipo: 'sistema',
+          titulo: `Envio enfileirado para ${cliente.nome}`,
+          mensagem: `Atualização processual enfileirada para envio via worker (processo ${processo.numero_cnj}).`,
+          link: `/processos/${processo.id}`,
+        })
+      }
 
-      enqueued.push({ cliente: cliente.nome, status: 'enfileirado' })
+      enqueued.push({ cliente: cliente.nome, status: enqueue.status, idempotency_key: enqueue.idempotencyKey })
     }
 
     return new Response(JSON.stringify({
       success: true,
       processo: processo.numero_cnj,
-      enfileirados: enqueued.filter((r) => r.status === 'enfileirado').length,
+      enfileirados: enqueued.filter((r) => r.status === 'queued' || r.status === 'duplicate').length,
       total: enqueued.length,
       detalhes: enqueued,
     }), {
