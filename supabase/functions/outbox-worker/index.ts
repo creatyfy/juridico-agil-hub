@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
       await svc.rpc('move_outbox_dead_letter', {
         p_id: row.id,
         p_worker_id: workerId,
-        p_error: decision.reason,
+        p_error: 'reason' in decision ? decision.reason : 'unknown',
       })
       processed.push({ id: row.id, status: 'dead_letter_exception' })
     }

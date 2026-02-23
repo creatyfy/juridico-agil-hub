@@ -4,7 +4,8 @@ const JUDIT_BASE_URL = 'https://requests.prod.judit.io'
 
 type Json = Record<string, unknown> | unknown[]
 
-let adminClient: ReturnType<typeof createClient> | null = null
+// deno-lint-ignore no-explicit-any
+let adminClient: any = null
 
 function getAdminClient() {
   if (!adminClient) {
