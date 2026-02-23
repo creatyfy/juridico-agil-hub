@@ -19,9 +19,6 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    const JUDIT_API_KEY = Deno.env.get('JUDIT_API_KEY');
-    if (!JUDIT_API_KEY) throw new Error('JUDIT_API_KEY not configured');
-
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) throw new Error('Missing authorization');
 
@@ -33,6 +30,9 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error('Unauthorized');
 
+    const { data: tenantApiKey, error: keyError } = await supabase.rpc('get_tenant_judit_api_key');
+    if (keyError || !tenantApiKey) throw new Error('Judit API key not configured for tenant');
+
     const parsed = requestSchema.safeParse(await req.json());
     if (!parsed.success) throw new Error(JSON.stringify(parsed.error.flatten()));
 
@@ -41,7 +41,7 @@ serve(async (req) => {
     if (action === 'create') {
       const data = await juditRequest({
         tenantKey: user.id,
-        apiKey: JUDIT_API_KEY,
+        apiKey: tenantApiKey,
         path: '/requests',
         method: 'POST',
         body: {
@@ -58,7 +58,7 @@ serve(async (req) => {
     if (action === 'status') {
       const data = await juditRequest({
         tenantKey: user.id,
-        apiKey: JUDIT_API_KEY,
+        apiKey: tenantApiKey,
         path: `/requests/${request_id}`,
       })
       return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -66,7 +66,7 @@ serve(async (req) => {
 
     const data = await juditRequest({
       tenantKey: user.id,
-      apiKey: JUDIT_API_KEY,
+      apiKey: tenantApiKey,
       path: `/responses?request_id=${request_id}`,
     })
     return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
