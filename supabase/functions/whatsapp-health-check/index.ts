@@ -9,6 +9,7 @@ const EVOLUTION_API_URL = Deno.env.get('EVOLUTION_API_URL')!
 const EVOLUTION_API_KEY = Deno.env.get('EVOLUTION_API_KEY')!
 const STALE_BACKLOG_HOURS = Number(Deno.env.get('OUTBOX_STALE_UNAVAILABLE_HOURS') ?? '6')
 const RECONNECT_WHEN_UNAVAILABLE = String(Deno.env.get('WHATSAPP_HEALTH_RECONNECT') ?? 'false').toLowerCase() === 'true'
+const CIRCUIT_COOLDOWN_SECONDS = Number(Deno.env.get('TENANT_CIRCUIT_COOLDOWN_SECONDS') ?? '600')
 
 function log(level: 'info' | 'warn' | 'error', event: string, payload: Record<string, unknown>) {
   const writer = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
@@ -19,6 +20,67 @@ function mapStateToStatus(state: string): 'connected' | 'connecting' | 'disconne
   if (state === 'open') return 'connected'
   if (state === 'connecting') return 'connecting'
   return 'disconnected'
+}
+
+async function evaluateTenantCircuits(svc: ReturnType<typeof createClient>, correlationId: string) {
+  const { data: metricsRows, error: metricsError } = await svc
+    .from('v_whatsapp_operational_metrics')
+    .select('tenant_id,success_rate_percent,retry_rate_percent,dead_letter_rate_percent,avg_backlog_age_seconds')
+
+  if (metricsError) {
+    log('error', 'tenant_circuit_metrics_query_failed', {
+      correlation_id: correlationId,
+      error: metricsError.message,
+    })
+    return { processed: 0, opened: 0, closed: 0 }
+  }
+
+  let opened = 0
+  let closed = 0
+
+  for (const metric of metricsRows ?? []) {
+    const { data: decision, error: decisionError } = await svc.rpc('apply_tenant_circuit_breaker', {
+      p_tenant_id: metric.tenant_id,
+      p_correlation_id: correlationId,
+      p_success_rate_percent: metric.success_rate_percent,
+      p_dead_letter_rate_percent: metric.dead_letter_rate_percent,
+      p_retry_rate_percent: metric.retry_rate_percent,
+      p_backlog_age_seconds: metric.avg_backlog_age_seconds,
+      p_cooldown_seconds: CIRCUIT_COOLDOWN_SECONDS,
+    })
+
+    if (decisionError) {
+      log('error', 'tenant_circuit_apply_failed', {
+        correlation_id: correlationId,
+        tenant_id: metric.tenant_id,
+        error: decisionError.message,
+      })
+      continue
+    }
+
+    const action = decision?.action
+    if (action === 'opened') {
+      opened += 1
+      log('warn', 'tenant_circuit_opened', {
+        correlation_id: correlationId,
+        tenant_id: metric.tenant_id,
+        reason: decision?.reason,
+      })
+    } else if (action === 'closed') {
+      closed += 1
+      log('info', 'tenant_circuit_closed', {
+        correlation_id: correlationId,
+        tenant_id: metric.tenant_id,
+        reason: decision?.reason,
+      })
+    }
+  }
+
+  return {
+    processed: metricsRows?.length ?? 0,
+    opened,
+    closed,
+  }
 }
 
 Deno.serve(async (req) => {
@@ -131,7 +193,16 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, correlation_id: correlationId, instances: processed.length, unavailable: unavailableCount, processed }), {
+  const circuitSummary = await evaluateTenantCircuits(svc, correlationId)
+
+  return new Response(JSON.stringify({
+    ok: true,
+    correlation_id: correlationId,
+    instances: processed.length,
+    unavailable: unavailableCount,
+    tenant_circuits: circuitSummary,
+    processed,
+  }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 })

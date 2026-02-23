@@ -595,6 +595,12 @@ Deno.serve(async (req) => {
         })
       }
 
+      if (enqueue.status === 'tenant_degraded') {
+        return new Response(JSON.stringify({ success: false, error: 'tenant_degraded' }), {
+          status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
       if (!enqueue.ok) {
         return new Response(JSON.stringify({ success: false, error: enqueue.reason || 'Falha ao enfileirar mensagem' }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
