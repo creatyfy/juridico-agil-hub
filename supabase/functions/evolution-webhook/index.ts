@@ -8,8 +8,9 @@ const corsHeaders = {
 const SIGNATURE_DRIFT_SECONDS = 300
 const NONCE_TTL_SECONDS = 600
 
+// deno-lint-ignore no-explicit-any
 async function persistWebhookFailure(input: {
-  svc: ReturnType<typeof createClient>
+  svc: any
   source: string
   correlationId: string
   eventName?: string
@@ -106,7 +107,8 @@ function timingSafeEqual(a: string, b: string): boolean {
   return mismatch === 0
 }
 
-async function reserveReplayNonce(svc: ReturnType<typeof createClient>, nonce: string): Promise<boolean> {
+// deno-lint-ignore no-explicit-any
+async function reserveReplayNonce(svc: any, nonce: string): Promise<boolean> {
   const nonceHash = await sha256Hex(nonce)
   const expiresAt = new Date(Date.now() + NONCE_TTL_SECONDS * 1000).toISOString()
 
