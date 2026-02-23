@@ -47,8 +47,9 @@ Deno.serve(async (req) => {
     }>(`
       SELECT id, cliente_id, processo_id, status, expiracao, created_at
       FROM public.convites_vinculacao
+      WHERE token = $1
       LIMIT 1
-    `);
+    `, [token]);
 
     // Limpeza explícita antes do COMMIT (defesa em profundidade).
     await client.queryArray("SELECT set_config('app.invite_token', '', true)");
