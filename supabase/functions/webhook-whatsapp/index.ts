@@ -7,6 +7,36 @@ import { handleIncomingMessage } from './services/orchestrator.ts'
 import type { RequestContext } from './services/types.ts'
 import { validateWebhookSignature } from './services/webhook-security.ts'
 
+async function persistWebhookFailure(input: {
+  supabase: ReturnType<typeof createClient>
+  tenantId?: string
+  instanceName?: string
+  source: string
+  eventName?: string
+  correlationId: string
+  httpStatus: number
+  errorMessage: string
+  errorStack?: string
+  payload?: unknown
+}) {
+  const { error } = await input.supabase.from('webhook_failures').insert({
+    tenant_id: input.tenantId ?? null,
+    instance_name: input.instanceName ?? null,
+    webhook_source: input.source,
+    event_name: input.eventName ?? null,
+    correlation_id: input.correlationId,
+    http_status: input.httpStatus,
+    error_message: input.errorMessage,
+    error_stack: input.errorStack ?? null,
+    payload: input.payload ?? null,
+  })
+
+  if (error) {
+    logError('webhook_failure_persist_failed', { correlation_id: input.correlationId, error: error.message })
+  }
+}
+
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-request-id, x-correlation-id, x-webhook-signature, x-webhook-timestamp, x-webhook-nonce',
@@ -61,28 +91,41 @@ async function enforceRateLimit(ctx: RequestContext): Promise<boolean> {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
-  const requestId = req.headers.get('x-request-id') || req.headers.get('x-correlation-id') || crypto.randomUUID()
+  const correlationId = req.headers.get('x-correlation-id') || req.headers.get('x-request-id') || crypto.randomUUID()
+
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  )
+
+  let body: Record<string, any> = {}
+  let rawBody = ''
 
   try {
-    const rawBody = await req.text()
-    const body = JSON.parse(rawBody)
+    rawBody = await req.text()
+    body = JSON.parse(rawBody)
 
     const instanceName = body.instance || body.instance_id || body.data?.instance
     const event = body.event
 
     if (!instanceName || !event) {
-      return jsonResponse({ ok: false, request_id: requestId, error: 'invalid_payload' }, 400)
+      await persistWebhookFailure({
+        supabase,
+        source: 'webhook-whatsapp',
+        eventName: event,
+        instanceName,
+        correlationId,
+        httpStatus: 400,
+        errorMessage: 'invalid_payload',
+        payload: body,
+      })
+      return jsonResponse({ ok: false, correlation_id: correlationId, error: 'invalid_payload' }, 400)
     }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    )
 
     const webhookValidation = await validateWebhookSignature({ req, rawBody, supabase, instanceName })
     if (!webhookValidation.valid) {
-      logInfo('webhook_rejected', { request_id: requestId, instance_name: instanceName, reason: webhookValidation.reason })
-      const unauthorized = unifiedErrorResponse(requestId, 'unauthorized_webhook', 401)
+      logInfo('webhook_rejected', { correlation_id: correlationId, instance_name: instanceName, reason: webhookValidation.reason })
+      const unauthorized = unifiedErrorResponse(correlationId, 'unauthorized_webhook', 401)
       const unauthorizedPayload = await unauthorized.text()
       return new Response(unauthorizedPayload, { status: unauthorized.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
@@ -94,12 +137,12 @@ Deno.serve(async (req) => {
       .maybeSingle()
 
     if (!instance) {
-      logInfo('unknown_instance', { request_id: requestId, instance_name: instanceName })
-      return jsonResponse({ ok: true, request_id: requestId })
+      logInfo('unknown_instance', { correlation_id: correlationId, instance_name: instanceName })
+      return jsonResponse({ ok: true, correlation_id: correlationId })
     }
 
     if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
-      return jsonResponse({ ok: true, request_id: requestId })
+      return jsonResponse({ ok: true, correlation_id: correlationId })
     }
 
     const payloadMessages = Array.isArray(body.data)
@@ -121,7 +164,7 @@ Deno.serve(async (req) => {
 
       const phone = normalizePhone(rawJid)
       const ctx: RequestContext = {
-        requestId,
+        requestId: correlationId,
         supabase,
         tenantId: instance.user_id,
         instanceName: instance.instance_name,
@@ -131,7 +174,7 @@ Deno.serve(async (req) => {
       }
 
       logInfo('incoming_message', {
-        request_id: requestId,
+        correlation_id: correlationId,
         tenant_id: ctx.tenantId,
         instance_id: ctx.instanceId,
         telefone: phone,
@@ -139,7 +182,7 @@ Deno.serve(async (req) => {
 
       const canProceed = await enforceRateLimit(ctx)
       if (!canProceed) {
-        logInfo('rate_limit_hit', { request_id: requestId, tenant_id: ctx.tenantId, telefone: phone })
+        logInfo('rate_limit_hit', { correlation_id: correlationId, tenant_id: ctx.tenantId, telefone: phone })
         continue
       }
 
@@ -153,20 +196,35 @@ Deno.serve(async (req) => {
       }
 
       if (!verified.clienteId) {
-        logError('verified_without_client', { request_id: requestId, tenant_id: ctx.tenantId, telefone: phone })
+        logError('verified_without_client', { correlation_id: correlationId, tenant_id: ctx.tenantId, telefone: phone })
         continue
       }
 
       await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
     }
 
-    return jsonResponse({ ok: true, request_id: requestId })
+    return jsonResponse({ ok: true, correlation_id: correlationId })
   } catch (error) {
-    logError('webhook_whatsapp_failed', {
-      request_id: requestId,
-      error: String(error),
+    const message = error instanceof Error ? error.message : String(error)
+    const stack = error instanceof Error ? error.stack : undefined
+
+    await persistWebhookFailure({
+      supabase,
+      source: 'webhook-whatsapp',
+      eventName: body?.event,
+      instanceName: body?.instance || body?.instance_id || body?.data?.instance,
+      correlationId,
+      httpStatus: 500,
+      errorMessage: message,
+      errorStack: stack,
+      payload: body,
     })
 
-    return jsonResponse({ ok: true, request_id: requestId })
+    logError('webhook_whatsapp_failed', {
+      correlation_id: correlationId,
+      error: message,
+    })
+
+    return jsonResponse({ ok: false, correlation_id: correlationId, error: 'internal_webhook_error' }, 500)
   }
 })
