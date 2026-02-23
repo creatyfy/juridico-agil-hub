@@ -48,10 +48,10 @@ export function maskSensitive(value?: string | null): string | null {
 }
 
 export type OutboxPayload = {
-  kind: 'process_update'
-  processoId: string
-  processoNumero: string
-  clienteNome: string
+  kind: 'process_update' | 'manual_chat' | 'auth' | 'orchestrator' | 'vinculacao_otp'
+  processoId?: string
+  processoNumero?: string
+  clienteNome?: string
   destinationNumber: string
   messageText: string
   instanceName: string
