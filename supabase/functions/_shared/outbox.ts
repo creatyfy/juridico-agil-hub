@@ -1,4 +1,4 @@
-export type OutboxStatus = 'pending' | 'sending' | 'sent' | 'retry' | 'failed' | 'dead_letter'
+export type OutboxStatus = 'pending' | 'sending' | 'accepted' | 'delivered' | 'retry' | 'dead_letter'
 
 const encoder = new TextEncoder()
 

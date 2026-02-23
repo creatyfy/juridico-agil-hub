@@ -1,19 +1,16 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 const JUDIT_BASE_URL = 'https://requests.prod.judit.io'
 
 type Json = Record<string, unknown> | unknown[]
 
-type CircuitState = {
-  failures: number
-  openedAt: number | null
-}
+let adminClient: ReturnType<typeof createClient> | null = null
 
-const circuitByTenant = new Map<string, CircuitState>()
-
-function getState(tenantKey: string): CircuitState {
-  if (!circuitByTenant.has(tenantKey)) {
-    circuitByTenant.set(tenantKey, { failures: 0, openedAt: null })
+function getAdminClient() {
+  if (!adminClient) {
+    adminClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   }
-  return circuitByTenant.get(tenantKey)!
+  return adminClient
 }
 
 function wait(ms: number) {
@@ -22,6 +19,22 @@ function wait(ms: number) {
 
 function shouldRetry(status?: number) {
   return !status || status === 429 || status >= 500
+}
+
+async function allowCircuit(tenantId: string): Promise<boolean> {
+  const svc = getAdminClient()
+  const { data, error } = await svc.rpc('judit_circuit_allow', { p_tenant_id: tenantId })
+  if (error) throw new Error(`judit_circuit_allow_failed: ${error.message}`)
+  return Boolean(data)
+}
+
+async function recordCircuit(tenantId: string, success: boolean, statusCode?: number) {
+  const svc = getAdminClient()
+  await svc.rpc('judit_circuit_record', {
+    p_tenant_id: tenantId,
+    p_success: success,
+    p_status_code: statusCode ?? null,
+  })
 }
 
 export async function juditRequest(input: {
@@ -36,18 +49,15 @@ export async function juditRequest(input: {
   const method = input.method ?? 'GET'
   const timeoutMs = input.timeoutMs ?? 8000
   const maxRetries = input.maxRetries ?? 3
-  const state = getState(input.tenantKey)
-  const now = Date.now()
 
-  if (state.openedAt && now - state.openedAt < 30_000) {
-    throw new Error('Judit circuit breaker aberto temporariamente')
-  }
+  const allowed = await allowCircuit(input.tenantKey)
+  if (!allowed) throw new Error('Judit circuit breaker aberto temporariamente')
 
   let lastError: string | undefined
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs)
 
     try {
       const response = await fetch(`${JUDIT_BASE_URL}${input.path}`, {
@@ -63,33 +73,20 @@ export async function juditRequest(input: {
       const data = text ? JSON.parse(text) : null
 
       if (!response.ok) {
-        if (response.status === 429) {
-          console.warn(JSON.stringify({ provider: 'judit', type: 'rate_limit', tenant: input.tenantKey, attempt }))
-        }
         if (!shouldRetry(response.status) || attempt === maxRetries) {
-          state.failures += 1
-          if (state.failures >= 5) state.openedAt = Date.now()
+          await recordCircuit(input.tenantKey, false, response.status)
           throw new Error(`Judit API error [${response.status}]: ${JSON.stringify(data)}`)
         }
         await wait((2 ** (attempt - 1)) * 500 + Math.floor(Math.random() * 200))
         continue
       }
 
-      state.failures = 0
-      state.openedAt = null
-      console.log(JSON.stringify({ provider: 'judit', type: 'success', tenant: input.tenantKey, path: input.path, attempt }))
+      await recordCircuit(input.tenantKey, true, response.status)
       return data
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
-      const timedOut = lastError.includes('aborted')
-      if (!timedOut && attempt === maxRetries) {
-        state.failures += 1
-        if (state.failures >= 5) state.openedAt = Date.now()
-        throw new Error(lastError)
-      }
       if (attempt === maxRetries) {
-        state.failures += 1
-        if (state.failures >= 5) state.openedAt = Date.now()
+        await recordCircuit(input.tenantKey, false)
         throw new Error(lastError)
       }
       await wait((2 ** (attempt - 1)) * 500 + Math.floor(Math.random() * 200))

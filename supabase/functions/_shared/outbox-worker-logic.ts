@@ -1,9 +1,8 @@
 import { computeBackoffWithJitterMs, shouldRetryStatus } from './outbox.ts'
 
 export type WorkerDecision =
-  | { action: 'sent' }
+  | { action: 'accepted' }
   | { action: 'retry'; delayMs: number; reason: string }
-  | { action: 'failed'; reason: string }
   | { action: 'dead_letter'; reason: string }
 
 export function decideOutboxOutcome(input: {
@@ -11,12 +10,11 @@ export function decideOutboxOutcome(input: {
   maxAttempts: number
   httpStatus?: number
   timedOut?: boolean
-  tenantRateLimited?: boolean
-  instanceRateLimited?: boolean
+  rateLimited?: boolean
 }): WorkerDecision {
   const currentAttempts = Math.max(1, input.attempts)
 
-  if (input.tenantRateLimited || input.instanceRateLimited) {
+  if (input.rateLimited) {
     return { action: 'retry', delayMs: computeBackoffWithJitterMs(currentAttempts), reason: 'rate_limit' }
   }
 
@@ -25,12 +23,12 @@ export function decideOutboxOutcome(input: {
     return { action: 'retry', delayMs: computeBackoffWithJitterMs(currentAttempts), reason: 'timeout' }
   }
 
-  if (!input.httpStatus || input.httpStatus < 400) return { action: 'sent' }
+  if (!input.httpStatus || input.httpStatus < 400) return { action: 'accepted' }
 
   if (shouldRetryStatus(input.httpStatus)) {
     if (currentAttempts >= input.maxAttempts) return { action: 'dead_letter', reason: `http_${input.httpStatus}` }
     return { action: 'retry', delayMs: computeBackoffWithJitterMs(currentAttempts), reason: `http_${input.httpStatus}` }
   }
 
-  return { action: 'failed', reason: `http_${input.httpStatus}` }
+  return { action: 'dead_letter', reason: `http_${input.httpStatus}` }
 }
