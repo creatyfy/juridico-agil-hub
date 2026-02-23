@@ -1,13 +1,17 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "https://esm.sh/zod@3.25.76";
+import { buildIdempotencyKey, type OutboxPayload } from "../_shared/outbox.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-const EVOLUTION_API_URL = Deno.env.get('EVOLUTION_API_URL')!;
-const EVOLUTION_API_KEY = Deno.env.get('EVOLUTION_API_KEY')!;
+const notifySchema = z.object({
+  processo_id: z.string().uuid(),
+  mensagem_personalizada: z.string().max(1000).optional(),
+})
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -15,7 +19,6 @@ serve(async (req: Request) => {
   }
 
   try {
-    // Authenticate user
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -29,15 +32,14 @@ serve(async (req: Request) => {
     }
 
     const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const { processo_id, mensagem_personalizada } = await req.json();
-
-    if (!processo_id) {
-      return new Response(JSON.stringify({ error: 'processo_id é obrigatório' }), {
+    const parsed = notifySchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return new Response(JSON.stringify({ error: parsed.error.flatten() }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const { processo_id, mensagem_personalizada } = parsed.data;
 
-    // Verify the process belongs to this user
     const { data: processo, error: procErr } = await svc
       .from('processos')
       .select('id, numero_cnj, classe, vara, tribunal')
@@ -51,7 +53,6 @@ serve(async (req: Request) => {
       });
     }
 
-    // Find linked clients with active WhatsApp
     const { data: vinculos } = await svc
       .from('cliente_processos')
       .select('cliente_id, clientes(id, nome, numero_whatsapp, status_vinculo)')
@@ -64,14 +65,13 @@ serve(async (req: Request) => {
       .filter((c: any) => c && c.status_vinculo === 'ativo' && c.numero_whatsapp);
 
     if (clientesAtivos.length === 0) {
-      return new Response(JSON.stringify({ 
-        error: 'Nenhum cliente vinculado com WhatsApp ativo para este processo' 
+      return new Response(JSON.stringify({
+        error: 'Nenhum cliente vinculado com WhatsApp ativo para este processo'
       }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Get user's WhatsApp instance
     const { data: instance } = await supabase
       .from('whatsapp_instancias')
       .select('*')
@@ -87,8 +87,7 @@ serve(async (req: Request) => {
       });
     }
 
-    // Build message
-    const defaultMsg = `📋 *Atualização Processual*\n\n` +
+    const messageBody = `📋 *Atualização Processual*\n\n` +
       `Olá! Informamos que houve uma nova movimentação no seu processo:\n\n` +
       `📌 *Processo:* ${processo.numero_cnj}\n` +
       `⚖️ *Classe:* ${processo.classe || 'N/A'}\n` +
@@ -98,73 +97,67 @@ serve(async (req: Request) => {
       `Para mais informações, entre em contato com seu advogado.\n\n` +
       `_Mensagem automática - Jarvis Jud_`;
 
-    const results: any[] = [];
+    const enqueued: Array<{ cliente: string; status: string }> = []
 
     for (const cliente of clientesAtivos) {
-      const number = cliente.numero_whatsapp.startsWith('55') 
-        ? cliente.numero_whatsapp 
+      const number = cliente.numero_whatsapp.startsWith('55')
+        ? cliente.numero_whatsapp
         : `55${cliente.numero_whatsapp}`;
 
-      try {
-        // Send via Evolution API
-        const evoRes = await fetch(
-          `${EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY },
-            body: JSON.stringify({ number, text: defaultMsg }),
-          }
-        );
-        const evoData = await evoRes.json();
+      const idempotencyKey = await buildIdempotencyKey({
+        tenantId: user.id,
+        event: 'process_update',
+        destination: number,
+        reference: `${processo.id}:${mensagem_personalizada ?? ''}`,
+      })
 
-        const remoteJid = `${number}@s.whatsapp.net`;
-
-        // Save message to DB
-        await svc.from('whatsapp_mensagens').insert({
-          instancia_id: instance.id,
-          remote_jid: remoteJid,
-          direcao: 'out',
-          conteudo: defaultMsg,
-          tipo: 'text',
-          message_id: evoData.key?.id || crypto.randomUUID(),
-        });
-
-        // Update chat cache
-        await svc.from('whatsapp_chats_cache').upsert({
-          instancia_id: instance.id,
-          remote_jid: remoteJid,
-          ultima_mensagem: defaultMsg.substring(0, 100),
-          ultimo_timestamp: new Date().toISOString(),
-          direcao: 'out',
-        }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false });
-
-        // Create notification for the lawyer
-        await svc.from('notificacoes').insert({
-          user_id: user.id,
-          tipo: 'sistema',
-          titulo: `Atualização enviada para ${cliente.nome}`,
-          mensagem: `Notificação processual enviada via WhatsApp para ${cliente.nome} (processo ${processo.numero_cnj})`,
-          link: `/processos/${processo.id}`,
-        });
-
-        results.push({ cliente: cliente.nome, numero: number, status: 'enviado' });
-        console.log(`Message sent to ${cliente.nome} (${number})`);
-      } catch (e) {
-        console.error(`Failed to send to ${cliente.nome}:`, e);
-        results.push({ cliente: cliente.nome, numero: number, status: 'erro', error: e.message });
+      const payload: OutboxPayload = {
+        kind: 'process_update',
+        processoId: processo.id,
+        processoNumero: processo.numero_cnj,
+        clienteNome: cliente.nome,
+        destinationNumber: number,
+        messageText: messageBody,
+        instanceName: instance.instance_name,
+        instanceId: instance.id,
+        userId: user.id,
       }
+
+      const { error: enqueueError } = await svc.from('message_outbox').upsert({
+        tenant_id: user.id,
+        aggregate_type: 'processo',
+        aggregate_id: processo.id,
+        idempotency_key: idempotencyKey,
+        payload,
+        status: 'pending',
+      }, { onConflict: 'tenant_id,idempotency_key', ignoreDuplicates: true })
+
+      if (enqueueError) {
+        console.error('erro ao enfileirar', enqueueError)
+        enqueued.push({ cliente: cliente.nome, status: 'erro' })
+        continue
+      }
+
+      await svc.from('notificacoes').insert({
+        user_id: user.id,
+        tipo: 'sistema',
+        titulo: `Envio enfileirado para ${cliente.nome}`,
+        mensagem: `Atualização processual enfileirada para envio via worker (processo ${processo.numero_cnj}).`,
+        link: `/processos/${processo.id}`,
+      })
+
+      enqueued.push({ cliente: cliente.nome, status: 'enfileirado' })
     }
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       processo: processo.numero_cnj,
-      enviados: results.filter(r => r.status === 'enviado').length,
-      total: results.length,
-      detalhes: results,
+      enfileirados: enqueued.filter((r) => r.status === 'enfileirado').length,
+      total: enqueued.length,
+      detalhes: enqueued,
     }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-
   } catch (error: any) {
     console.error('Error:', error);
     return new Response(JSON.stringify({ error: error.message || 'Erro interno' }), {

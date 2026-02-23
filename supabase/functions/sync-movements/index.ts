@@ -1,12 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+import { juditRequest } from "../_shared/judit-client.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
-
-const JUDIT_REQUESTS_URL = "https://requests.prod.judit.io";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -59,38 +59,32 @@ serve(async (req) => {
 
       try {
         // Create request on Judit for this CNJ
-        const createRes = await fetch(`${JUDIT_REQUESTS_URL}/requests`, {
+        const createData = await juditRequest({
+          tenantKey: mon.user_id,
+          apiKey: JUDIT_API_KEY,
+          path: '/requests',
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'api-key': JUDIT_API_KEY,
-          },
-          body: JSON.stringify({
+          body: {
             search: {
               search_type: 'lawsuit_cnj',
               search_key: processo.numero_cnj,
               response_type: 'lawsuit',
             },
-          }),
+          },
         });
 
-        const createData = await createRes.json();
-        if (!createRes.ok) {
-          syncResults.push({ cnj: processo.numero_cnj, error: 'Failed to create Judit request' });
-          continue;
-        }
-
-        const requestId = createData.request_id;
+        const requestId = (createData as any).request_id;
 
         // Poll for completion (max 30s)
         let attempts = 0;
         let completed = false;
         while (attempts < 6 && !completed) {
           await new Promise(r => setTimeout(r, 5000));
-          const statusRes = await fetch(`${JUDIT_REQUESTS_URL}/requests/${requestId}`, {
-            headers: { 'api-key': JUDIT_API_KEY },
-          });
-          const statusData = await statusRes.json();
+          const statusData = await juditRequest({
+            tenantKey: mon.user_id,
+            apiKey: JUDIT_API_KEY,
+            path: `/requests/${requestId}`,
+          }) as any;
           if (statusData.request_status === 'completed' || statusData.request_status === 'done') {
             completed = true;
           }
@@ -103,11 +97,11 @@ serve(async (req) => {
         }
 
         // Get results
-        const resultsRes = await fetch(`${JUDIT_REQUESTS_URL}/responses?request_id=${requestId}`, {
-          headers: { 'api-key': JUDIT_API_KEY },
+        const resultsData = await juditRequest({
+          tenantKey: mon.user_id,
+          apiKey: JUDIT_API_KEY,
+          path: `/responses?request_id=${requestId}`,
         });
-        const resultsText = await resultsRes.text();
-        const resultsData = JSON.parse(resultsText);
 
         // Extract movements from response
         const lawsuitData = Array.isArray(resultsData) ? resultsData[0] : resultsData;
