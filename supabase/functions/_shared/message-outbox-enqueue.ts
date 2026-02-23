@@ -5,6 +5,8 @@ const TENANT_BUCKET_CAPACITY = Number(Deno.env.get('TENANT_BUCKET_CAPACITY') ?? 
 const TENANT_BUCKET_REFILL_PER_SECOND = Number(Deno.env.get('TENANT_BUCKET_REFILL_PER_SECOND') ?? '1')
 const INSTANCE_BUCKET_CAPACITY = Number(Deno.env.get('INSTANCE_BUCKET_CAPACITY') ?? '10')
 const INSTANCE_BUCKET_REFILL_PER_SECOND = Number(Deno.env.get('INSTANCE_BUCKET_REFILL_PER_SECOND') ?? '0.5')
+const OUTBOX_BACKLOG_LIMIT_PER_TENANT = Number(Deno.env.get('OUTBOX_BACKLOG_LIMIT_PER_TENANT') ?? '500')
+const OUTBOX_BACKLOG_BLOCK_ENQUEUE = String(Deno.env.get('OUTBOX_BACKLOG_BLOCK_ENQUEUE') ?? 'true').toLowerCase() === 'true'
 
 export type EnqueueMessageInput = {
   supabase: SupabaseClient
@@ -57,18 +59,61 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
 
   const { data: connectedInstance } = await input.supabase
     .from('whatsapp_instancias')
-    .select('id, instance_name, status')
+    .select('id, instance_name, status, is_available, unavailable_reason')
     .eq('id', input.payload.instanceId)
     .eq('user_id', input.tenantId)
-    .eq('status', 'connected')
     .maybeSingle()
 
-  if (!connectedInstance) {
+  if (!connectedInstance || connectedInstance.status !== 'connected' || connectedInstance.is_available === false) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'enqueue_fail_fast_instance_unavailable',
+      tenant_id: input.tenantId,
+      instance_id: input.payload.instanceId,
+      instance_status: connectedInstance?.status ?? 'missing',
+      reason: connectedInstance?.unavailable_reason ?? 'instance_not_connected',
+    }))
     return {
       ok: false,
       status: 'instance_disconnected',
       idempotencyKey,
-      reason: 'instance_not_connected',
+      reason: connectedInstance?.unavailable_reason ?? 'instance_not_connected',
+    }
+  }
+
+  const { count: backlogCount, error: backlogCountError } = await input.supabase
+    .from('message_outbox')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', input.tenantId)
+    .in('status', ['pending', 'retry', 'sending', 'accepted'])
+
+  if (backlogCountError) {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'backlog_guard_count_failed',
+      tenant_id: input.tenantId,
+      error: backlogCountError.message,
+    }))
+    return { ok: false, status: 'error', idempotencyKey, reason: backlogCountError.message }
+  }
+
+  if ((backlogCount ?? 0) > OUTBOX_BACKLOG_LIMIT_PER_TENANT) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'backlog_guard_triggered',
+      tenant_id: input.tenantId,
+      backlog: backlogCount,
+      limit: OUTBOX_BACKLOG_LIMIT_PER_TENANT,
+      block_enqueue: OUTBOX_BACKLOG_BLOCK_ENQUEUE,
+    }))
+
+    if (OUTBOX_BACKLOG_BLOCK_ENQUEUE) {
+      return {
+        ok: false,
+        status: 'rate_limited',
+        idempotencyKey,
+        reason: 'tenant_backlog_limit_exceeded',
+      }
     }
   }
 

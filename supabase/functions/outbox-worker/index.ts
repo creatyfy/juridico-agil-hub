@@ -162,6 +162,29 @@ Deno.serve(async (req) => {
     }
   }
 
+
+  const { data: metricsRows, error: metricsError } = await svc
+    .from('v_whatsapp_operational_metrics')
+    .select('tenant_id,success_rate_percent,retry_rate_percent,dead_letter_rate_percent,backlog_count,avg_backlog_age_seconds')
+
+  if (metricsError) {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'outbox_metrics_query_failed',
+      workerId,
+      error: metricsError.message,
+    }))
+  } else {
+    for (const metric of metricsRows ?? []) {
+      console.log(JSON.stringify({
+        level: 'info',
+        event: 'outbox_operational_metrics',
+        workerId,
+        ...metric,
+      }))
+    }
+  }
+
   return new Response(JSON.stringify({ processed, claimed: rows?.length ?? 0, workerId }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
