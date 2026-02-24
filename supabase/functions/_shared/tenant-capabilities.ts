@@ -30,8 +30,18 @@ interface CacheEntry {
 const CACHE_TTL_MS = 30_000;
 const capabilitiesCache = new Map<string, CacheEntry>();
 
+const DEFAULT_CAPABILITIES: TenantCapabilities = {
+  plan_name: "free",
+  max_cadastros: 50,
+  features: {
+    lembrete_monitoramento: true,
+    whatsapp_chat: true,
+    importacao_processos: true,
+  },
+};
+
 export async function getTenantCapabilities(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   tenantId: string,
 ): Promise<TenantCapabilities> {
   const cached = capabilitiesCache.get(tenantId);
@@ -39,22 +49,9 @@ export async function getTenantCapabilities(
     return cached.value;
   }
 
-  const { data, error } = await supabase
-    .from("tenants")
-    .select("plan_id, plans!inner(name, max_cadastros, features)")
-    .eq("id", tenantId)
-    .single();
-
-  if (error || !data || !data.plans) {
-    throw new Error("tenant_capabilities_not_found");
-  }
-
-  const planRow = Array.isArray(data.plans) ? data.plans[0] : data.plans;
-  const capabilities: TenantCapabilities = {
-    plan_name: String(planRow.name),
-    max_cadastros: Number(planRow.max_cadastros),
-    features: (planRow.features ?? {}) as Record<string, unknown>,
-  };
+  // TODO: query tenants/plans tables once they exist.
+  // For now, return default capabilities for all tenants.
+  const capabilities = { ...DEFAULT_CAPABILITIES };
 
   capabilitiesCache.set(tenantId, {
     expiresAt: Date.now() + CACHE_TTL_MS,
