@@ -2,6 +2,9 @@
 
 Esta base usa **somente `public.audit_logs`** como fonte canônica de eventos, evitando tabela duplicada.
 
+SQL pronto para execução/consulta:
+- `docs/analytics/sql/product_metrics_activation_queries.sql`
+
 ## 1) Eventos-chave de ativação (canonizados)
 
 Eventos alvo:
@@ -84,7 +87,8 @@ Motivo:
 Para dashboard interno:
 1. **TTL curto (60–300s)** no backend (Redis/KV/memória) por chave `tenant_id + janela`.
 2. **Stale-while-revalidate** para leitura rápida e atualização assíncrona.
-3. Se volume crescer, migrar para **materialized view** com refresh incremental/agendado (ex.: a cada 5 min).
+3. Em listas globais (ex.: admin), adicionar chave por página/filtro (`plan_tier`, ordenação, limite).
+4. Se volume crescer, migrar para **materialized view** com refresh incremental/agendado (ex.: a cada 5 min).
 
 ## 6) Métricas recomendadas para decisão
 
