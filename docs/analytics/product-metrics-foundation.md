@@ -98,3 +98,9 @@ Além da visão base:
 - **Invite adoption**: `% tenants com primeiro_convite_enviado em até 14 dias`.
 - **Retenção de atividade**: tenants com `total_eventos_30d > 0` por coorte mensal.
 - **Depth score**: peso por evento (ex.: premium=3, convite=2, cadastro=1) para priorizar CS/upsell.
+
+
+## 7) Próximo passo: score de saúde por tenant
+
+- Guia: `docs/analytics/tenant-health-score.md`
+- SQL: `docs/analytics/sql/tenant_health_score_queries.sql`
