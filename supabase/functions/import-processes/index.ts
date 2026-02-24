@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getTenantCapabilities } from "../_shared/tenant-capabilities.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +35,7 @@ serve(async (req) => {
       throw new Error('No processes provided');
     }
 
+    const capabilities = await getTenantCapabilities(supabase, user.id);
     const results = [];
 
     for (const proc of processos) {
@@ -98,15 +100,28 @@ serve(async (req) => {
             const doc = parte.main_document || null;
             const tipoDoc = doc && doc.length > 14 ? 'CNPJ' : 'CPF';
             const tipoPessoa = doc && doc.length > 14 ? 'juridica' : 'fisica';
-            await supabase
+            const { error: clienteError } = await supabase
               .from('clientes')
               .upsert({
+                tenant_id: user.id,
                 user_id: user.id,
                 nome: parte.name,
                 documento: doc,
+                cpf: tipoDoc === 'CPF' && doc ? doc.replace(/\D/g, '') : null,
                 tipo_documento: tipoDoc,
                 tipo_pessoa: tipoPessoa,
               }, { onConflict: 'user_id,documento' });
+
+            if (clienteError) {
+              const planLimitReached = clienteError.message?.includes('plan_limit_reached') || clienteError.code === 'P0001';
+              if (planLimitReached) {
+                return new Response(JSON.stringify({ error: 'plan_limit_reached' }), {
+                  status: 409,
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
+              }
+              console.error('Error upserting cliente:', clienteError);
+            }
           }
         }
       }
@@ -114,7 +129,7 @@ serve(async (req) => {
       results.push({ numero_cnj: proc.numero_cnj, id: processo.id, success: true });
     }
 
-    return new Response(JSON.stringify({ results }), {
+    return new Response(JSON.stringify({ results, capabilities }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
