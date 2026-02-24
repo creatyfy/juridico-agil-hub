@@ -5,6 +5,7 @@ import { useProcessos } from '@/hooks/useProcessos';
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import OnboardingBanner from '@/components/OnboardingBanner';
 
 export default function AdvogadoDashboard() {
   const { user } = useAuth();
@@ -50,6 +51,7 @@ export default function AdvogadoDashboard() {
 
   return (
     <div className="space-y-6">
+      <OnboardingBanner />
       <div>
         <h1 className="text-2xl font-bold">Olá, {user?.name?.split(' ')[0] || 'Advogado'}</h1>
         <p className="text-muted-foreground text-sm mt-1">
