@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getTenantCapabilities } from "../_shared/tenant-capabilities.ts";
+import { logTenantAction } from "../_shared/audit-log.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -100,7 +101,14 @@ serve(async (req) => {
             const doc = parte.main_document || null;
             const tipoDoc = doc && doc.length > 14 ? 'CNPJ' : 'CPF';
             const tipoPessoa = doc && doc.length > 14 ? 'juridica' : 'fisica';
-            const { error: clienteError } = await supabase
+            const { data: existingCliente } = await supabase
+              .from('clientes')
+              .select('id')
+              .eq('tenant_id', user.id)
+              .eq('documento', doc)
+              .maybeSingle();
+
+            const { data: clienteUpserted, error: clienteError } = await supabase
               .from('clientes')
               .upsert({
                 tenant_id: user.id,
@@ -110,7 +118,9 @@ serve(async (req) => {
                 cpf: tipoDoc === 'CPF' && doc ? doc.replace(/\D/g, '') : null,
                 tipo_documento: tipoDoc,
                 tipo_pessoa: tipoPessoa,
-              }, { onConflict: 'user_id,documento' });
+              }, { onConflict: 'user_id,documento' })
+              .select('id')
+              .single();
 
             if (clienteError) {
               const planLimitReached = clienteError.message?.includes('plan_limit_reached') || clienteError.code === 'P0001';
@@ -121,6 +131,23 @@ serve(async (req) => {
                 });
               }
               console.error('Error upserting cliente:', clienteError);
+              continue;
+            }
+
+            if (!existingCliente?.id && clienteUpserted?.id) {
+              await logTenantAction(supabase, {
+                tenantId: user.id,
+                userId: user.id,
+                action: 'cadastro_created',
+                entity: 'cliente',
+                entityId: clienteUpserted.id,
+                metadata: {
+                  source: 'import_processes',
+                  processo_numero_cnj: proc.numero_cnj,
+                  nome: parte.name,
+                  tipo_documento: tipoDoc,
+                },
+              });
             }
           }
         }

@@ -8,6 +8,7 @@ import {
   isFeatureNotAvailableError,
   requireFeature,
 } from "../_shared/tenant-capabilities.ts";
+import { logTenantAction } from "../_shared/audit-log.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,6 +41,14 @@ serve(async (req: Request) => {
     const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     await requireFeature(svc, user.id, "lembrete_monitoramento");
+    await logTenantAction(svc, {
+      tenantId: user.id,
+      userId: user.id,
+      action: "premium_feature_used",
+      entity: "feature",
+      entityId: "lembrete_monitoramento",
+      metadata: { source: "notify-process-update" },
+    });
     const parsed = notifySchema.safeParse(await req.json());
     if (!parsed.success) {
       return new Response(JSON.stringify({ error: parsed.error.flatten() }), {

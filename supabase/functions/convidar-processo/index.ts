@@ -4,6 +4,7 @@ import {
   isFeatureNotAvailableError,
   requireFeature,
 } from "../_shared/tenant-capabilities.ts";
+import { logTenantAction } from "../_shared/audit-log.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,6 +44,14 @@ Deno.serve(async (req) => {
     }
 
     await requireFeature(supabase, user.id, "gerente_exclusivo");
+    await logTenantAction(supabase, {
+      tenantId: user.id,
+      userId: user.id,
+      action: "premium_feature_used",
+      entity: "feature",
+      entityId: "gerente_exclusivo",
+      metadata: { source: "convidar-processo" },
+    });
 
     const { cliente_id, processo_id } = await req.json();
 
@@ -87,6 +96,18 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    await logTenantAction(supabase, {
+      tenantId: user.id,
+      userId: user.id,
+      action: "invite_sent",
+      entity: "cliente_processo",
+      entityId: invite.id,
+      metadata: {
+        processo_id,
+        cliente_id,
+      },
+    });
 
     // Get processo info for notification
     const { data: processo } = await supabase
