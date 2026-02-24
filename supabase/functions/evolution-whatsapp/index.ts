@@ -13,6 +13,22 @@ function evoHeaders() {
   return { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY }
 }
 
+async function parseEvolutionError(res: Response): Promise<string> {
+  const raw = await res.text()
+  if (!raw) return `Evolution returned ${res.status}`
+
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed?.response?.message
+      || parsed?.error
+      || parsed?.message
+      || parsed?.reason
+      || raw
+  } catch {
+    return raw
+  }
+}
+
 async function getUser(req: Request) {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -431,15 +447,6 @@ Deno.serve(async (req) => {
         if (checkRes.ok) instanceExists = true
       } catch (_e) {}
 
-      if (instanceExists) {
-        try {
-          await fetch(`${EVOLUTION_API_URL}/instance/logout/${instanceName}`, {
-            method: 'DELETE', headers: evoHeaders(),
-          })
-          await new Promise(r => setTimeout(r, 2000))
-        } catch (_e) {}
-      }
-
       let qrBase64: string | null = null
       let qrCode: string | null = null
       let pairingCode: string | null = null
@@ -458,6 +465,18 @@ Deno.serve(async (req) => {
             },
           }),
         })
+
+        if (!evoRes.ok) {
+          const message = await parseEvolutionError(evoRes)
+          return new Response(JSON.stringify({
+            error: 'instance_create_failed',
+            provider_message: message,
+          }), {
+            status: evoRes.status,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+
         const evoData = await evoRes.json()
         instanceId = evoData.instance?.instanceId || null
         qrBase64 = evoData.qrcode?.base64 || null
@@ -466,6 +485,7 @@ Deno.serve(async (req) => {
       }
 
       if (!qrCode && !qrBase64) {
+        let lastQrError: string | null = null
         for (let attempt = 0; attempt < 5; attempt++) {
           await new Promise(r => setTimeout(r, 2000))
           try {
@@ -473,12 +493,26 @@ Deno.serve(async (req) => {
               `${EVOLUTION_API_URL}/instance/connect/${instanceName}`,
               { headers: evoHeaders() }
             )
+            if (!qrRes.ok) {
+              lastQrError = await parseEvolutionError(qrRes)
+              continue
+            }
             const qrData = await qrRes.json()
             qrBase64 = qrData.base64 || null
             qrCode = qrData.code || null
             pairingCode = qrData.pairingCode || null
             if (qrCode || qrBase64) break
           } catch (e) { console.error('QR fetch error:', e) }
+        }
+
+        if (!qrCode && !qrBase64 && lastQrError) {
+          return new Response(JSON.stringify({
+            error: 'qrcode_unavailable',
+            provider_message: lastQrError,
+          }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
         }
       }
 
@@ -645,8 +679,9 @@ Deno.serve(async (req) => {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err: any) {
+    const status = Number(err?.status) || 401
     return new Response(JSON.stringify({ error: err?.message ?? 'Unknown error' }), {
-      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 })
