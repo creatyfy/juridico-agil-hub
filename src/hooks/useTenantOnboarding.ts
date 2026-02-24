@@ -37,10 +37,32 @@ export function useTenantOnboarding() {
     }
 
     setLoading(true);
-    const { data, error } = await supabase.rpc('get_tenant_onboarding_status');
 
-    if (!error && data) {
-      setStatus(data as OnboardingStatus);
+    // Derive onboarding status from actual data instead of RPC
+    try {
+      const [processosRes, clientesRes] = await Promise.all([
+        supabase.from('processos').select('id', { count: 'exact', head: true }),
+        supabase.from('cliente_processos').select('id', { count: 'exact', head: true }).eq('status', 'ativo'),
+      ]);
+
+      const hasProcessos = (processosRes.count ?? 0) > 0;
+      const hasClientes = (clientesRes.count ?? 0) > 0;
+
+      const steps: OnboardingStatus['steps'] = [
+        { step: 'import_first_process_judit', completed: hasProcessos },
+        { step: 'link_first_client_to_process', completed: hasClientes },
+        { step: 'activate_notifications', completed: false },
+      ];
+
+      const allCompleted = steps.every((s) => s.completed);
+
+      setStatus({
+        is_first_access: !hasProcessos,
+        onboarding_completed: allCompleted,
+        steps,
+      });
+    } catch (e) {
+      console.error('Onboarding status error:', e);
     }
 
     setLoading(false);
@@ -57,12 +79,11 @@ export function useTenantOnboarding() {
   const completedCount = status.steps.filter((s) => s.completed).length;
   const progressPercent = completedCount === 0 ? 0 : Math.round((completedCount / 3) * 100);
 
-  const startStep = useCallback(async (step: OnboardingStepKey) => {
-    await supabase.rpc('start_tenant_onboarding_step', { p_step: step });
+  const startStep = useCallback(async (_step: OnboardingStepKey) => {
+    // No-op until onboarding RPC functions are created
   }, []);
 
-  const completeStep = useCallback(async (step: OnboardingStepKey, metadata?: Record<string, unknown>) => {
-    await supabase.rpc('complete_tenant_onboarding_step', { p_step: step, p_metadata: metadata ?? {} });
+  const completeStep = useCallback(async (_step: OnboardingStepKey, _metadata?: Record<string, unknown>) => {
     await fetchStatus();
   }, [fetchStatus]);
 
