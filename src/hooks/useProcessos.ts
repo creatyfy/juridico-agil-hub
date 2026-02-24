@@ -18,6 +18,20 @@ export interface Processo {
   updated_at: string;
 }
 
+export interface ProcessoSyncHistoryItem {
+  id: string;
+  created_at: string;
+  action: string;
+  metadata: Record<string, any> | null;
+}
+
+export interface ProcessoClientLink {
+  id: string;
+  nome: string;
+  email: string | null;
+  status: string;
+}
+
 export interface Movimentacao {
   id: string;
   processo_id: string;
@@ -124,6 +138,31 @@ export async function importProcesses(processos: any[]) {
 export async function syncProcessMovements(processoId?: string) {
   const { data, error } = await supabase.functions.invoke('sync-movements', {
     body: processoId ? { processo_id: processoId } : {},
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function linkProcessClient(processoId: string, clienteId: string) {
+  const { data, error } = await supabase.functions.invoke('link-process-client', {
+    body: { processo_id: processoId, cliente_id: clienteId },
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function getProcessSyncHistory(processoId: string): Promise<ProcessoSyncHistoryItem[]> {
+  const { data, error } = await supabase.functions.invoke('get-process-sync-history', {
+    body: { processo_id: processoId },
+  });
+  if (error) throw error;
+  return data?.history || [];
+}
+
+
+export async function activateProcessMonitoring(processoId: string) {
+  const { data, error } = await supabase.functions.invoke('activate-process-monitoring', {
+    body: { processo_id: processoId },
   });
   if (error) throw error;
   return data;
