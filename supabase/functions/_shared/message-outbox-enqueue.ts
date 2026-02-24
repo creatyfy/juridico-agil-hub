@@ -57,37 +57,7 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
     }
   }
 
-  const { data: tenantState, error: tenantStateError } = await input.supabase
-    .from('tenants')
-    .select('status')
-    .eq('id', input.tenantId)
-    .maybeSingle()
-
-  if (tenantStateError) {
-    return {
-      ok: false,
-      status: 'error',
-      idempotencyKey,
-      reason: tenantStateError.message,
-    }
-  }
-
-  if (tenantState?.status && tenantState.status !== 'active') {
-    console.warn(JSON.stringify({
-      level: 'warn',
-      event: 'enqueue_fail_fast_tenant_not_active',
-      tenant_id: input.tenantId,
-      tenant_status: tenantState.status,
-      error: 'tenant_degraded',
-    }))
-
-    return {
-      ok: false,
-      status: 'tenant_degraded',
-      idempotencyKey,
-      reason: 'tenant_degraded',
-    }
-  }
+  // Tenant status check skipped — no tenants table in current schema
 
   const { data: connectedInstance } = await input.supabase
     .from('whatsapp_instancias')
