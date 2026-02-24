@@ -4,6 +4,7 @@ import {
   isFeatureNotAvailableError,
   requireFeature,
 } from "../_shared/tenant-capabilities.ts";
+import { logTenantAction } from "../_shared/audit-log.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +53,14 @@ Deno.serve(async (req) => {
     const svc = createClient(supabaseUrl, serviceKey);
 
     await requireFeature(svc, user.id, "secretariado");
+    await logTenantAction(svc, {
+      tenantId: user.id,
+      userId: user.id,
+      action: "premium_feature_used",
+      entity: "feature",
+      entityId: "secretariado",
+      metadata: { source: "gerar-convite-vinculacao" },
+    });
 
     // Check for existing pending invite
     const { data: existing } = await svc
@@ -88,6 +97,15 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    await logTenantAction(svc, {
+      tenantId: user.id,
+      userId: user.id,
+      action: "invite_sent",
+      entity: "convite_vinculacao",
+      entityId: invite.id,
+      metadata: { cliente_id, processo_id },
+    });
 
     return new Response(JSON.stringify({ token: invite.token, id: invite.id }), {
       status: 200,
