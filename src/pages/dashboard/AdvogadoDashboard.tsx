@@ -13,6 +13,7 @@ export default function AdvogadoDashboard() {
   const [recentMovs, setRecentMovs] = useState(0);
   const [totalClientes, setTotalClientes] = useState(0);
   const [clientesAtivos, setClientesAtivos] = useState(0);
+  const [processosSemCliente, setProcessosSemCliente] = useState(0);
 
   useEffect(() => {
     async function fetchRecentMovs() {
@@ -30,6 +31,28 @@ export default function AdvogadoDashboard() {
       setRecentMovs(count || 0);
     }
     fetchRecentMovs();
+  }, [processos]);
+
+
+  useEffect(() => {
+    async function fetchProcessosSemCliente() {
+      if (processos.length === 0) {
+        setProcessosSemCliente(0);
+        return;
+      }
+
+      const processoIds = processos.map((p) => p.id);
+      const { data } = await supabase
+        .from('cliente_processos')
+        .select('processo_id')
+        .in('processo_id', processoIds)
+        .in('status', ['pendente', 'ativo']);
+
+      const linkedIds = new Set((data || []).map((row: any) => row.processo_id));
+      setProcessosSemCliente(processoIds.filter((id) => !linkedIds.has(id)).length);
+    }
+
+    fetchProcessosSemCliente();
   }, [processos]);
 
   useEffect(() => {
@@ -71,9 +94,21 @@ export default function AdvogadoDashboard() {
           subtitle="Últimos 7 dias"
           icon={<TrendingUp className="h-5 w-5" />}
         />
-        <StatsCard title="Alertas" value={0} subtitle="Nenhum alerta" icon={<AlertTriangle className="h-5 w-5" />} />
+        <StatsCard
+          title="Alertas"
+          value={processosSemCliente}
+          subtitle={processosSemCliente > 0 ? 'Processos sem cliente vinculado' : 'Nenhum alerta'}
+          icon={<AlertTriangle className="h-5 w-5" />}
+        />
         <StatsCard title="Clientes" value={totalClientes} subtitle={`${clientesAtivos} ativo(s) no sistema`} icon={<Users className="h-5 w-5" />} />
       </div>
+
+      {processosSemCliente > 0 && (
+        <div className="card-elevated p-4 border-yellow-500/30 bg-yellow-500/10">
+          <p className="text-sm font-medium">⚠️ Você possui {processosSemCliente} processo(s) sem cliente vinculado.</p>
+          <Link to="/processos" className="text-xs text-primary hover:underline">Ir para processos e corrigir</Link>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-5 gap-6">
         <div className="lg:col-span-3 card-elevated p-6">

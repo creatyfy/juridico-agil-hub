@@ -11,6 +11,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ProcessosList from "./pages/processos/ProcessosList";
 import ProcessoDetail from "./pages/processos/ProcessoDetail";
+import ImportacaoSucesso from "./pages/processos/ImportacaoSucesso";
 import ClientesList from "./pages/clientes/ClientesList";
 import ClienteDetail from "./pages/clientes/ClienteDetail";
 import Atendimento from "./pages/atendimento/Atendimento";
@@ -46,6 +47,7 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/processos" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ProcessosList /></ProtectedRoute>} />
         <Route path="/processos/:id" element={<ProcessoDetail />} />
+        <Route path="/processos/importacao-sucesso/:id" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ImportacaoSucesso /></ProtectedRoute>} />
         <Route path="/clientes" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClientesList /></ProtectedRoute>} />
         <Route path="/clientes/:id" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClienteDetail /></ProtectedRoute>} />
         <Route path="/atendimento" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><Atendimento /></ProtectedRoute>} />

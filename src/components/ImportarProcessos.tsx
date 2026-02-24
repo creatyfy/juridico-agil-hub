@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Search, Download, Loader2, CheckCircle2, FileText, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ interface JuditProcesso {
 
 export default function ImportarProcessos({ onImported }: { onImported?: () => void }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [step, setStep] = useState<'idle' | 'searching' | 'results' | 'importing' | 'done'>('idle');
   const [results, setResults] = useState<JuditProcesso[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -175,13 +177,18 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
       const result = await importProcesses(toImport);
       toast.success(`${toImport.length} processo(s) importado(s) com sucesso!`);
+      const importedId = result?.results?.find((r: any) => r.success)?.id;
       setStep('done');
-      onImported?.();
+      if (importedId) {
+        navigate(`/processos/importacao-sucesso/${importedId}`);
+      } else {
+        onImported?.();
+      }
     } catch (err: any) {
       toast.error(err.message || 'Erro ao importar');
       setStep('results');
     }
-  }, [selected, results, importMode, onImported]);
+  }, [selected, results, importMode, onImported, navigate]);
 
   const toggleSelect = (idx: number) => {
     setSelected(prev => {

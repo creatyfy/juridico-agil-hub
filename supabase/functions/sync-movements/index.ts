@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { juditRequest } from "../_shared/judit-client.ts";
+import { logTenantAction } from "../_shared/audit-log.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -162,8 +163,34 @@ serve(async (req) => {
           }
 
           syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovs.length });
+
+          await logTenantAction(supabase, {
+            tenantId: mon.user_id,
+            userId: userId || mon.user_id,
+            action: 'processo_sincronizado',
+            entity: 'processo',
+            entityId: processo.id,
+            metadata: {
+              numero_cnj: processo.numero_cnj,
+              novas_movimentacoes: newMovs.length,
+              source: 'sync-movements',
+            },
+          });
         } else {
           syncResults.push({ cnj: processo.numero_cnj, newMovements: 0 });
+
+          await logTenantAction(supabase, {
+            tenantId: mon.user_id,
+            userId: userId || mon.user_id,
+            action: 'processo_sincronizado',
+            entity: 'processo',
+            entityId: processo.id,
+            metadata: {
+              numero_cnj: processo.numero_cnj,
+              novas_movimentacoes: 0,
+              source: 'sync-movements',
+            },
+          });
         }
 
         // Update last sync time

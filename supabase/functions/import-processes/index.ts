@@ -75,6 +75,19 @@ serve(async (req) => {
           ultima_sync: new Date().toISOString(),
         }, { onConflict: 'processo_id' });
 
+      await logTenantAction(supabase, {
+        tenantId: user.id,
+        userId: user.id,
+        action: 'processo_importado',
+        entity: 'processo',
+        entityId: processo.id,
+        metadata: {
+          numero_cnj: proc.numero_cnj,
+          tribunal: proc.tribunal || null,
+          source: 'import-processes',
+        },
+      });
+
       // Insert movimentacoes if provided
       if (proc.movimentacoes && Array.isArray(proc.movimentacoes)) {
         const movs = proc.movimentacoes.map((m: any) => ({
