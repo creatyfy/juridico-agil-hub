@@ -3,6 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.25.76";
 import { type OutboxPayload } from "../_shared/outbox.ts";
 import { enqueueMessage } from "../_shared/message-outbox-enqueue.ts";
+import {
+  featureNotAvailablePayload,
+  isFeatureNotAvailableError,
+  requireFeature,
+} from "../_shared/tenant-capabilities.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,6 +38,8 @@ serve(async (req: Request) => {
     }
 
     const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    await requireFeature(svc, user.id, "lembrete_monitoramento");
     const parsed = notifySchema.safeParse(await req.json());
     if (!parsed.success) {
       return new Response(JSON.stringify({ error: parsed.error.flatten() }), {
@@ -157,6 +164,12 @@ serve(async (req: Request) => {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
+    if (isFeatureNotAvailableError(error)) {
+      return new Response(JSON.stringify(featureNotAvailablePayload(error.feature)), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     console.error('Error:', error);
     return new Response(JSON.stringify({ error: error.message || 'Erro interno' }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },

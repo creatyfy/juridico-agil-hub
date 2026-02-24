@@ -6,6 +6,22 @@ export interface TenantCapabilities {
   features: Record<string, unknown>;
 }
 
+export interface FeatureNotAvailableErrorPayload {
+  error: "feature_not_available";
+  feature: string;
+}
+
+export class FeatureNotAvailableError extends Error {
+  readonly code = "feature_not_available";
+  readonly feature: string;
+
+  constructor(feature: string) {
+    super("feature_not_available");
+    this.name = "FeatureNotAvailableError";
+    this.feature = feature;
+  }
+}
+
 interface CacheEntry {
   expiresAt: number;
   value: TenantCapabilities;
@@ -46,4 +62,39 @@ export async function getTenantCapabilities(
   });
 
   return capabilities;
+}
+
+export async function hasFeature(
+  supabase: SupabaseClient,
+  tenantId: string,
+  featureKey: string,
+): Promise<boolean> {
+  const capabilities = await getTenantCapabilities(supabase, tenantId);
+  return capabilities.features[featureKey] === true;
+}
+
+export async function requireFeature(
+  supabase: SupabaseClient,
+  tenantId: string,
+  featureKey: string,
+): Promise<void> {
+  const enabled = await hasFeature(supabase, tenantId, featureKey);
+  if (!enabled) {
+    throw new FeatureNotAvailableError(featureKey);
+  }
+}
+
+export function isFeatureNotAvailableError(
+  error: unknown,
+): error is FeatureNotAvailableError {
+  return error instanceof FeatureNotAvailableError;
+}
+
+export function featureNotAvailablePayload(
+  feature: string,
+): FeatureNotAvailableErrorPayload {
+  return {
+    error: "feature_not_available",
+    feature,
+  };
 }

@@ -1,4 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  featureNotAvailablePayload,
+  isFeatureNotAvailableError,
+  requireFeature,
+} from "../_shared/tenant-capabilities.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,6 +41,8 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    await requireFeature(supabase, user.id, "gerente_exclusivo");
 
     const { cliente_id, processo_id } = await req.json();
 
@@ -150,6 +157,13 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
+    if (isFeatureNotAvailableError(e)) {
+      return new Response(JSON.stringify(featureNotAvailablePayload(e.feature)), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     console.error("Unexpected error:", e);
     return new Response(
       JSON.stringify({ error: "Erro interno" }),
