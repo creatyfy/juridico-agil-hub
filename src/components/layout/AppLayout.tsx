@@ -2,9 +2,11 @@ import { Outlet } from 'react-router-dom';
 import AppSidebar from './AppSidebar';
 import { useAuth } from '@/contexts/AuthContext';
 import NotificationCenter from '@/components/NotificationCenter';
+import { useTenantCapabilities } from '@/hooks/useTenantCapabilities';
 
 export default function AppLayout() {
   const { user } = useAuth();
+  useTenantCapabilities(Boolean(user));
 
   return (
     <div className="flex min-h-screen w-full bg-background">
