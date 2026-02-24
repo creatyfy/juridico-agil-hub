@@ -119,33 +119,7 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
     }
   }
 
-  const { data: rateLimitAllowed, error: rateLimitError } = await input.supabase.rpc('consume_rate_limit_tokens_pair', {
-    p_tenant_id: input.tenantId,
-    p_instance_key: connectedInstance.id,
-    p_tenant_capacity: TENANT_BUCKET_CAPACITY,
-    p_tenant_refill_per_second: TENANT_BUCKET_REFILL_PER_SECOND,
-    p_instance_capacity: INSTANCE_BUCKET_CAPACITY,
-    p_instance_refill_per_second: INSTANCE_BUCKET_REFILL_PER_SECOND,
-    p_amount: 1,
-  })
-
-  if (rateLimitError) {
-    return {
-      ok: false,
-      status: 'error',
-      idempotencyKey,
-      reason: rateLimitError.message,
-    }
-  }
-
-  if (!rateLimitAllowed) {
-    return {
-      ok: false,
-      status: 'rate_limited',
-      idempotencyKey,
-      reason: 'rate_limit_exceeded',
-    }
-  }
+  // Rate limiting skipped — consume_rate_limit_tokens_pair RPC not yet created
 
   const outboxRow = {
     tenant_id: input.tenantId,
