@@ -61,25 +61,25 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
 
   const { data: connectedInstance } = await input.supabase
     .from('whatsapp_instancias')
-    .select('id, instance_name, status, is_available, unavailable_reason')
+    .select('id, instance_name, status')
     .eq('id', input.payload.instanceId)
     .eq('user_id', input.tenantId)
     .maybeSingle()
 
-  if (!connectedInstance || connectedInstance.status !== 'connected' || connectedInstance.is_available === false) {
+  if (!connectedInstance || connectedInstance.status !== 'connected') {
     console.warn(JSON.stringify({
       level: 'warn',
       event: 'enqueue_fail_fast_instance_unavailable',
       tenant_id: input.tenantId,
       instance_id: input.payload.instanceId,
       instance_status: connectedInstance?.status ?? 'missing',
-      reason: connectedInstance?.unavailable_reason ?? 'instance_not_connected',
+      reason: 'instance_not_connected',
     }))
     return {
       ok: false,
       status: 'instance_disconnected',
       idempotencyKey,
-      reason: connectedInstance?.unavailable_reason ?? 'instance_not_connected',
+      reason: 'instance_not_connected',
     }
   }
 
