@@ -138,7 +138,7 @@ Deno.serve(async (req) => {
       await supabase.from("cliente_processos").update({
         status: "ativo",
         data_aceite: new Date().toISOString(),
-      }).eq("id", invite.id).is("token_used_at", null);
+      }).eq("id", invite.id).eq("status", "pendente");
 
       return jsonResponse({ success: true, status: "ativo" });
     }
