@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { hashOtpCode, ensureOtpNotRateLimited, registerOtpRateEvent } from "../_shared/otp-security.ts";
+import { hashOtpCode } from "../_shared/otp-security.ts";
 import { sha256Hex } from "../_shared/invite-security.ts";
 
 const corsHeaders = {
@@ -12,7 +12,7 @@ serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    const { email, code, documento } = await req.json();
+    const { email, code } = await req.json();
     const normalizedEmail = String(email ?? '').trim().toLowerCase();
     const normalizedCode = String(code ?? '').trim();
     if (!normalizedEmail || !normalizedCode) {
@@ -23,34 +23,17 @@ serve(async (req: Request) => {
     const otpPepper = Deno.env.get('OTP_PEPPER') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? req.headers.get('x-real-ip') ?? '0.0.0.0';
     const ipHash = await sha256Hex(ip);
-    const documentHash = documento ? await sha256Hex(String(documento).replace(/\D/g, '')) : null;
-
-    const rate = await ensureOtpNotRateLimited({ supabase, ipHash, email: normalizedEmail, documentHash });
-    if (!rate.allowed) {
-      return new Response(JSON.stringify({ error: 'Código inválido ou expirado' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
     const submittedHash = await hashOtpCode(normalizedCode, otpPepper);
-    const { data: otp } = await supabase
-      .from('email_verification_codes')
-      .select('id')
-      .eq('email', normalizedEmail)
-      .eq('otp_context', 'email_verification')
-      .eq('verified', false)
-      .is('consumed_at', null)
-      .gte('expires_at', new Date().toISOString())
-      .eq('code_hash', submittedHash)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
 
-    await registerOtpRateEvent({ supabase, ipHash, email: normalizedEmail, documentHash });
+    const { data: otpResult, error: otpError } = await supabase.rpc('verify_and_consume_otp', {
+      p_identifier: normalizedEmail,
+      p_hash: submittedHash,
+      p_source_ip_hash: ipHash,
+    });
 
-    if (!otp) {
+    if (otpError || !otpResult?.[0]?.ok) {
       return new Response(JSON.stringify({ error: 'Código inválido ou expirado' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
-
-    await supabase.from('email_verification_codes').update({ verified: true, consumed_at: new Date().toISOString() }).eq('id', otp.id);
 
     const { data: users } = await supabase.auth.admin.listUsers();
     const user = users?.users?.find((u) => u.email === normalizedEmail);

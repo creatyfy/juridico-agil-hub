@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { assertTenantScope, ForbiddenTenantAccessError } from "../_shared/tenant-guard.ts";
+import { assertTenantScope, ForbiddenTenantAccessError, tenantWriteGuard } from "../_shared/tenant-guard.ts";
 import { hashOtpCode, registerOtpRateEvent, ensureOtpNotRateLimited } from "../_shared/otp-security.ts";
 import { sha256Hex, verifyInviteJwt } from "../_shared/invite-security.ts";
 
@@ -45,8 +45,9 @@ Deno.serve(async (req) => {
     if (fetchError || !invite) return jsonResponse({ error: "Convite não encontrado" }, 404);
     assertTenantScope(invite.advogado_user_id, claims.tenant_id);
 
-    if (invite.token_used_at || invite.status === "ativo") return jsonResponse({ error: "Convite já utilizado" }, 409);
-    if (invite.token_expires_at && new Date(invite.token_expires_at) < new Date()) return jsonResponse({ error: "Convite expirado" }, 410);
+    if (invite.invite_nonce !== claims.nonce) return jsonResponse({ error: "Convite inválido" }, 401);
+    if (invite.token_expires_at && new Date(invite.token_expires_at).getTime() + 30000 < Date.now()) return jsonResponse({ error: "Convite expirado" }, 410);
+
 
     if (action === "fetch") {
       return jsonResponse({
@@ -108,28 +109,27 @@ Deno.serve(async (req) => {
 
       const email = String(invite.clientes?.email ?? "");
       const ipHash = await sha256Hex(readIp(req));
-      const documentHash = await sha256Hex(String(invite.clientes?.documento ?? ""));
-      const rate = await ensureOtpNotRateLimited({ supabase, ipHash, email, documentHash });
-      if (!rate.allowed) return jsonResponse({ error: "Código inválido ou expirado" }, 400);
-
       const submittedHash = await hashOtpCode(String(code).trim(), otpPepper);
-      const { data: otpRow } = await supabase
-        .from("email_verification_codes")
-        .select("id")
-        .eq("email", email)
-        .eq("otp_context", "invite_link")
-        .eq("verified", false)
-        .is("consumed_at", null)
-        .gte("expires_at", new Date().toISOString())
-        .eq("code_hash", submittedHash)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const { data: otpResult, error: otpError } = await supabase.rpc("verify_and_consume_otp", {
+        p_identifier: email,
+        p_hash: submittedHash,
+        p_source_ip_hash: ipHash,
+      });
+      if (otpError || !otpResult?.[0]?.ok) return jsonResponse({ error: "Código inválido ou expirado" }, 400);
 
-      await registerOtpRateEvent({ supabase, ipHash, email, documentHash });
-      if (!otpRow) return jsonResponse({ error: "Código inválido ou expirado" }, 400);
+      const { error: claimError } = await supabase.rpc("claim_cliente_processo_invite_token", {
+        p_invite_id: invite.id,
+        p_nonce: claims.nonce,
+        p_expected_tenant: claims.tenant_id,
+      });
+      if (claimError) return jsonResponse({ error: "Convite inválido, expirado ou já utilizado" }, 409);
 
-      await supabase.from("email_verification_codes").update({ verified: true, consumed_at: new Date().toISOString() }).eq("id", otpRow.id);
+      await tenantWriteGuard({
+        supabase,
+        tenantIdFromContext: claims.tenant_id,
+        resourceId: invite.id,
+        resourceTable: "cliente_processos",
+      });
 
       if (!invite.clientes?.auth_user_id) {
         await supabase.from("clientes").update({ auth_user_id: user.id, status: "ativo" }).eq("id", invite.cliente_id);
@@ -138,8 +138,7 @@ Deno.serve(async (req) => {
       await supabase.from("cliente_processos").update({
         status: "ativo",
         data_aceite: new Date().toISOString(),
-        token_used_at: new Date().toISOString(),
-      }).eq("id", invite.id);
+      }).eq("id", invite.id).is("token_used_at", null);
 
       return jsonResponse({ success: true, status: "ativo" });
     }

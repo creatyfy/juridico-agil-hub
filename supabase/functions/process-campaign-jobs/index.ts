@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { enqueueMessage } from '../_shared/message-outbox-enqueue.ts'
+import { tenantWriteGuard } from '../_shared/tenant-guard.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,52 +13,66 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
   const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const body = await req.json().catch(() => ({})) as { action?: string; campaign_job_id?: string }
 
-  const { data: recipients } = await svc
-    .from('campaign_recipients')
-    .select('id,campaign_job_id,tenant_id,destination,reference,payload,campaign_jobs!inner(id,status,instance_id)')
-    .eq('status', 'pending')
-    .in('campaign_jobs.status', ['pending', 'running'])
-    .limit(BATCH_SIZE)
+  if (body.action === 'cancel' && body.campaign_job_id) {
+    const { data: job } = await svc.from('campaign_jobs').select('id,tenant_id').eq('id', body.campaign_job_id).maybeSingle()
+    if (!job) return new Response(JSON.stringify({ cancelled: 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    await tenantWriteGuard({ supabase: svc, tenantIdFromContext: job.tenant_id, resourceId: job.id, resourceTable: 'campaign_jobs' })
+    const { data: cancelled } = await svc.rpc('cancel_campaign_recipients', { p_campaign_job_id: body.campaign_job_id })
+    await svc.from('campaign_jobs').update({ status: 'cancelled', cancelled_at: new Date().toISOString() }).eq('id', body.campaign_job_id).in('status', ['pending', 'running', 'paused'])
+    return new Response(JSON.stringify({ cancelled: cancelled ?? 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+  }
+
+  const { data: jobs } = await svc
+    .from('campaign_jobs')
+    .select('id,status,instance_id,tenant_id')
+    .in('status', ['pending', 'running'])
+    .order('created_at', { ascending: true })
+    .limit(20)
 
   const processed: Array<Record<string, unknown>> = []
 
-  for (const recipient of recipients ?? []) {
-    const job = Array.isArray(recipient.campaign_jobs) ? recipient.campaign_jobs[0] : recipient.campaign_jobs
-    if (!job || (job.status !== 'pending' && job.status !== 'running')) continue
-
-    const payload = recipient.payload as Record<string, unknown>
-    const messageText = String(payload.messageText ?? payload.message ?? '')
-
-    const enqueue = await enqueueMessage({
-      supabase: svc,
-      tenantId: recipient.tenant_id,
-      destination: recipient.destination,
-      reference: recipient.reference,
-      event: 'campaign_message',
-      aggregateType: 'campaign_job',
-      aggregateId: recipient.campaign_job_id,
-      campaignJobId: recipient.campaign_job_id,
-      payload: {
-        kind: 'campaign_message',
-        destinationNumber: recipient.destination,
-        messageText,
-        instanceId: job.instance_id,
-        instanceName: String(payload.instanceName ?? ''),
-        userId: recipient.tenant_id,
-      },
+  for (const job of jobs ?? []) {
+    const { data: recipients } = await svc.rpc('claim_campaign_recipients', {
+      p_campaign_job_id: job.id,
+      p_limit: BATCH_SIZE,
     })
 
-    if (enqueue.ok && enqueue.outboxId) {
-      await svc.from('campaign_recipients').update({ status: 'queued', outbox_id: enqueue.outboxId }).eq('id', recipient.id)
-      await svc.from('campaign_jobs').update({ status: 'running', started_at: new Date().toISOString() }).eq('id', recipient.campaign_job_id)
-    }
+    for (const recipient of recipients ?? []) {
+      const payload = recipient.payload as Record<string, unknown>
+      const messageText = String(payload.messageText ?? payload.message ?? '')
 
-    if (!enqueue.ok) {
-      await svc.from('campaign_recipients').update({ status: 'failed', last_error: enqueue.reason ?? enqueue.status }).eq('id', recipient.id)
-    }
+      const enqueue = await enqueueMessage({
+        supabase: svc,
+        tenantId: recipient.tenant_id,
+        destination: recipient.destination,
+        reference: recipient.reference,
+        event: 'campaign_message',
+        aggregateType: 'campaign_job',
+        aggregateId: recipient.campaign_job_id,
+        campaignJobId: recipient.campaign_job_id,
+        payload: {
+          kind: 'campaign_message',
+          destinationNumber: recipient.destination,
+          messageText,
+          instanceId: job.instance_id,
+          instanceName: String(payload.instanceName ?? ''),
+          userId: recipient.tenant_id,
+        },
+      })
 
-    processed.push({ recipient_id: recipient.id, status: enqueue.status })
+      await tenantWriteGuard({ supabase: svc, tenantIdFromContext: recipient.tenant_id, resourceId: recipient.id, resourceTable: 'campaign_recipients' })
+
+      if (enqueue.ok && enqueue.outboxId) {
+        await svc.from('campaign_recipients').update({ outbox_id: enqueue.outboxId, updated_at: new Date().toISOString() }).eq('id', recipient.id).eq('status', 'queued')
+        await svc.from('campaign_jobs').update({ status: 'running', started_at: new Date().toISOString() }).eq('id', recipient.campaign_job_id).in('status', ['pending', 'running'])
+      } else {
+        await svc.from('campaign_recipients').update({ status: 'failed', last_error: enqueue.reason ?? enqueue.status, updated_at: new Date().toISOString() }).eq('id', recipient.id).eq('status', 'queued')
+      }
+
+      processed.push({ recipient_id: recipient.id, status: enqueue.status })
+    }
   }
 
   await svc.rpc('finalize_completed_campaign_jobs')

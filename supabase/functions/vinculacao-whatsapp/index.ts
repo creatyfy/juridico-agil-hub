@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { enqueueMessage } from "../_shared/message-outbox-enqueue.ts";
-import { assertTenantScope, ForbiddenTenantAccessError } from "../_shared/tenant-guard.ts";
+import { assertTenantScope, ForbiddenTenantAccessError, tenantWriteGuard } from "../_shared/tenant-guard.ts";
 import { hashOtpCode } from "../_shared/otp-security.ts";
+import { sha256Hex } from "../_shared/invite-security.ts";
 import { verifyInviteJwt } from "../_shared/invite-security.ts";
 
 const corsHeaders = {
@@ -41,10 +42,9 @@ Deno.serve(async (req) => {
     if (error || !convite) return json({ error: "Convite não encontrado" }, 404);
     assertTenantScope(convite.advogado_user_id, claims.tenant_id);
 
-    if (convite.token_used_at || convite.status === "utilizado") return json({ error: "Convite já utilizado" }, 409);
-    if ((convite.token_expires_at && new Date(convite.token_expires_at) < new Date()) || new Date(convite.expiracao) < new Date()) {
-      return json({ error: "Convite expirado" }, 410);
-    }
+    if (convite.invite_nonce !== claims.nonce) return json({ error: "Convite inválido" }, 401);
+    if (convite.token_expires_at && new Date(convite.token_expires_at).getTime() + 30000 < Date.now()) return json({ error: "Convite expirado" }, 410);
+
 
     if (action === "fetch") {
       return json({
@@ -111,32 +111,37 @@ Deno.serve(async (req) => {
       const { codigo, ip } = body;
       if (!codigo) return json({ error: "codigo é obrigatório" }, 400);
 
-      const { data: otp } = await svc
-        .from("validacoes_otp")
-        .select("*")
-        .eq("convite_id", convite.id)
-        .eq("validado", false)
-        .is("consumed_at", null)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (!otp) return json({ error: "Código inválido ou expirado" }, 400);
-      if (otp.tentativas >= 5) return json({ error: "Código inválido ou expirado" }, 400);
-      if (new Date(otp.expiracao) < new Date()) return json({ error: "Código inválido ou expirado" }, 400);
-
       const otpHash = await hashOtpCode(String(codigo).trim(), otpPepper);
-      await svc.from("validacoes_otp").update({ tentativas: otp.tentativas + 1 }).eq("id", otp.id);
-      if (otp.codigo_otp_hash !== otpHash) return json({ error: "Código inválido ou expirado" }, 400);
+      const ipHash = await sha256Hex(String(ip ?? "0.0.0.0"));
+      const { data: otpResult, error: otpError } = await svc.rpc("verify_and_consume_otp", {
+        p_identifier: convite.id,
+        p_hash: otpHash,
+        p_source_ip_hash: ipHash,
+      });
+      if (otpError || !otpResult?.[0]?.ok) return json({ error: "Código inválido ou expirado" }, 400);
 
-      await svc.from("validacoes_otp").update({ validado: true, consumed_at: new Date().toISOString() }).eq("id", otp.id);
-      await svc.from("clientes").update({ numero_whatsapp: otp.numero_informado, status_vinculo: "ativo" }).eq("id", otp.cliente_id);
+      const { error: claimError } = await svc.rpc("claim_invite_token", {
+        p_invite_id: convite.id,
+        p_nonce: claims.nonce,
+        p_expected_tenant: claims.tenant_id,
+      });
+      if (claimError) return json({ error: "Convite inválido, expirado ou já utilizado" }, 409);
+
+      await tenantWriteGuard({
+        supabase: svc,
+        tenantIdFromContext: claims.tenant_id,
+        resourceId: convite.id,
+        resourceTable: "convites_vinculacao",
+      });
+
+      const otpId = otpResult?.[0]?.otp_id as string | undefined;
+      const { data: consumedOtp } = await svc.from("validacoes_otp").select("numero_informado,cliente_id").eq("id", otpId).maybeSingle();
+      await svc.from("clientes").update({ numero_whatsapp: consumedOtp?.numero_informado ?? convite.clientes?.numero_whatsapp ?? null, status_vinculo: "ativo" }).eq("id", convite.cliente_id);
       await svc.from("convites_vinculacao").update({
         status: "utilizado",
         ip_aceite: ip || null,
         data_aceite: new Date().toISOString(),
-        token_used_at: new Date().toISOString(),
-      }).eq("id", convite.id);
+      }).eq("id", convite.id).is("token_used_at", null);
 
       return json({ success: true, message: "Número validado com sucesso." });
     }
