@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
         status: "utilizado",
         ip_aceite: ip || null,
         data_aceite: new Date().toISOString(),
-      }).eq("id", convite.id).is("token_used_at", null);
+      }).eq("id", convite.id).eq("status", "pendente");
 
       return json({ success: true, message: "Número validado com sucesso." });
     }
