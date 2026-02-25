@@ -280,6 +280,30 @@ Deno.serve(async (req) => {
     })
   }
 
+
+  const { error: inboxError } = await svc
+    .from('inbound_events')
+    .insert({
+      tenant_id: tenantId,
+      instance_id: instanceId,
+      provider_message_id: providerMessageId,
+      payload,
+    })
+
+  if (inboxError) {
+    if (String(inboxError.message).toLowerCase().includes('duplicate') || String(inboxError.message).includes('inbound_events_tenant_id_instance_id_provider_message_id_key')) {
+      return new Response(JSON.stringify({ ok: true, duplicate: true, correlation_id: correlationId }), {
+        status: 202,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: inboxError.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
   const { data: outboxMatch, error: crossValidationError } = await svc
     .from('message_outbox')
     .select('id')

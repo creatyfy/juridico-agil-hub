@@ -5,6 +5,8 @@ import {
   requireFeature,
 } from "../_shared/tenant-capabilities.ts";
 import { logTenantAction } from "../_shared/audit-log.ts";
+import { assertTenantScope, ForbiddenTenantAccessError } from "../_shared/tenant-guard.ts";
+import { maskedIdentity, signInviteJwt } from "../_shared/invite-security.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,14 +45,18 @@ Deno.serve(async (req) => {
     }
 
     const { cliente_id, processo_id } = await req.json();
+
+    const svc = createClient(supabaseUrl, serviceKey);
+
+    const { data: processoScope } = await svc.from("processos").select("user_id").eq("id", processo_id).maybeSingle();
+    assertTenantScope(processoScope?.user_id, user.id);
+
     if (!cliente_id || !processo_id) {
       return new Response(JSON.stringify({ error: "cliente_id e processo_id são obrigatórios" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const svc = createClient(supabaseUrl, serviceKey);
 
     await requireFeature(svc, user.id, "secretariado");
     await logTenantAction(svc, {
@@ -65,7 +71,7 @@ Deno.serve(async (req) => {
     // Check for existing pending invite
     const { data: existing } = await svc
       .from("convites_vinculacao")
-      .select("id, token, status")
+      .select("id, token, status, invite_nonce")
       .eq("cliente_id", cliente_id)
       .eq("processo_id", processo_id)
       .eq("status", "pendente")
@@ -79,6 +85,8 @@ Deno.serve(async (req) => {
       });
     }
 
+    const nonce = crypto.randomUUID();
+
     // Create new invite
     const { data: invite, error: insertError } = await svc
       .from("convites_vinculacao")
@@ -86,6 +94,8 @@ Deno.serve(async (req) => {
         cliente_id,
         processo_id,
         advogado_user_id: user.id,
+        invite_nonce: nonce,
+        token_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       })
       .select("id, token")
       .single();
@@ -98,6 +108,24 @@ Deno.serve(async (req) => {
       });
     }
 
+    const jwtSecret = Deno.env.get("INVITE_JWT_SECRET") ?? serviceKey;
+    const { data: clienteIdent } = await svc
+      .from("clientes")
+      .select("email, documento")
+      .eq("id", cliente_id)
+      .single();
+
+    const inviteToken = await signInviteJwt({
+      tenant_id: user.id,
+      cliente_id,
+      identity_hint: maskedIdentity(clienteIdent?.email ?? null, clienteIdent?.documento ?? null),
+      nonce,
+      invite_id: invite.id,
+      ttlSeconds: 15 * 60,
+    }, jwtSecret);
+
+    await svc.from("convites_vinculacao").update({ token: inviteToken }).eq("id", invite.id);
+
     await logTenantAction(svc, {
       tenantId: user.id,
       userId: user.id,
@@ -107,11 +135,18 @@ Deno.serve(async (req) => {
       metadata: { cliente_id, processo_id },
     });
 
-    return new Response(JSON.stringify({ token: invite.token, id: invite.id }), {
+    return new Response(JSON.stringify({ token: inviteToken, id: invite.id }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
+    if (e instanceof ForbiddenTenantAccessError) {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     if (isFeatureNotAvailableError(e)) {
       return new Response(JSON.stringify(featureNotAvailablePayload(e.feature)), {
         status: 403,

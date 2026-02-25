@@ -17,6 +17,7 @@ export type EnqueueMessageInput = {
   event: string
   aggregateType?: string
   aggregateId?: string
+  campaignJobId?: string
 }
 
 export type EnqueueMessageResult = {
@@ -119,7 +120,19 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
     }
   }
 
-  // Rate limiting skipped — consume_rate_limit_tokens_pair RPC not yet created
+  const { data: allowedToken, error: tokenError } = await input.supabase.rpc('consume_token', {
+    p_tenant_id: input.tenantId,
+    p_instance_id: connectedInstance.id,
+    p_amount: 1,
+  })
+
+  if (tokenError) {
+    return { ok: false, status: 'error', idempotencyKey, reason: tokenError.message }
+  }
+
+  if (!allowedToken) {
+    return { ok: false, status: 'rate_limited', idempotencyKey, reason: 'tenant_instance_token_bucket_exhausted' }
+  }
 
   const outboxRow = {
     tenant_id: input.tenantId,
@@ -134,6 +147,7 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
       userId: input.tenantId,
     },
     status: 'pending',
+    campaign_job_id: input.campaignJobId ?? null,
   }
 
   const { data, error } = await input.supabase
