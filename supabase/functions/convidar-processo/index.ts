@@ -5,6 +5,8 @@ import {
   requireFeature,
 } from "../_shared/tenant-capabilities.ts";
 import { logTenantAction } from "../_shared/audit-log.ts";
+import { assertTenantScope, ForbiddenTenantAccessError } from "../_shared/tenant-guard.ts";
+import { maskedIdentity, signInviteJwt } from "../_shared/invite-security.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -55,6 +57,10 @@ Deno.serve(async (req) => {
 
     const { cliente_id, processo_id } = await req.json();
 
+    const { data: processoScope } = await supabase.from("processos").select("user_id").eq("id", processo_id).maybeSingle();
+    assertTenantScope(processoScope?.user_id, user.id);
+
+
     if (!cliente_id || !processo_id) {
       return new Response(
         JSON.stringify({ error: "cliente_id e processo_id são obrigatórios" }),
@@ -77,6 +83,8 @@ Deno.serve(async (req) => {
       );
     }
 
+    const nonce = crypto.randomUUID();
+
     // Create invite
     const { data: invite, error: insertError } = await supabase
       .from("cliente_processos")
@@ -85,8 +93,10 @@ Deno.serve(async (req) => {
         processo_id,
         advogado_user_id: user.id,
         status: "pendente",
+        invite_nonce: nonce,
+        token_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       })
-      .select("id, token")
+      .select("id, token, invite_nonce")
       .single();
 
     if (insertError) {
@@ -96,6 +106,27 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    const jwtSecret = Deno.env.get("INVITE_JWT_SECRET") ?? serviceRoleKey;
+    const { data: clienteIdent } = await supabase
+      .from("clientes")
+      .select("email, documento")
+      .eq("id", cliente_id)
+      .single();
+
+    const inviteToken = await signInviteJwt({
+      tenant_id: user.id,
+      cliente_id,
+      identity_hint: maskedIdentity(clienteIdent?.email ?? null, clienteIdent?.documento ?? null),
+      nonce,
+      invite_id: invite.id,
+      ttlSeconds: 15 * 60,
+    }, jwtSecret);
+
+    await supabase
+      .from("cliente_processos")
+      .update({ token: inviteToken })
+      .eq("id", invite.id);
 
     await logTenantAction(supabase, {
       tenantId: user.id,
@@ -146,7 +177,7 @@ Deno.serve(async (req) => {
         const resendKey = Deno.env.get("RESEND_API_KEY");
         if (resendKey) {
           const baseUrl = req.headers.get("origin") || "https://juridico-agil-hub.lovable.app";
-          const inviteUrl = `${baseUrl}/convite/${invite.token}`;
+          const inviteUrl = `${baseUrl}/convite/${inviteToken}`;
 
           await fetch("https://api.resend.com/emails", {
             method: "POST",
@@ -174,10 +205,17 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, token: invite.token, emailSent }),
+      JSON.stringify({ success: true, token: inviteToken, emailSent }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
+    if (e instanceof ForbiddenTenantAccessError) {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     if (isFeatureNotAvailableError(e)) {
       return new Response(JSON.stringify(featureNotAvailablePayload(e.feature)), {
         status: 403,

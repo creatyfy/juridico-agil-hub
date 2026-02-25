@@ -83,9 +83,11 @@ Deno.serve(async (req) => {
         const ok = await svc.rpc('reschedule_outbox_retry', {
           p_id: row.id,
           p_worker_id: workerId,
+          p_lease_version: row.lease_version,
           p_next_retry_at: new Date(Date.now() + decision.delayMs).toISOString(),
           p_error: decision.reason,
         })
+        if (row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id) }
         processed.push({ id: row.id, status: ok.data ? 'retry' : 'lease_lost_retry' })
         continue
       }
@@ -94,8 +96,10 @@ Deno.serve(async (req) => {
         const ok = await svc.rpc('move_outbox_dead_letter', {
           p_id: row.id,
           p_worker_id: workerId,
+          p_lease_version: row.lease_version,
           p_error: decision.reason,
         })
+        if (row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id) }
         processed.push({ id: row.id, status: ok.data ? 'dead_letter' : 'lease_lost_dead_letter' })
         continue
       }
@@ -123,9 +127,14 @@ Deno.serve(async (req) => {
       const accepted = await svc.rpc('complete_outbox_accepted', {
         p_id: row.id,
         p_worker_id: workerId,
+        p_lease_version: row.lease_version,
         p_provider_message_id: providerMessageId,
         p_provider_response: evoData,
       })
+
+      if (accepted.data && row.campaign_job_id) {
+        await svc.from('campaign_recipients').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('outbox_id', row.id)
+      }
 
       processed.push({
         id: row.id,
@@ -147,6 +156,7 @@ Deno.serve(async (req) => {
           p_id: row.id,
           p_worker_id: workerId,
           p_next_retry_at: new Date(Date.now() + computeBackoffWithJitterMs(Number(row.attempts ?? 1))).toISOString(),
+          p_lease_version: row.lease_version,
           p_error: decision.reason,
         })
         processed.push({ id: row.id, status: 'retry_exception' })
@@ -156,6 +166,7 @@ Deno.serve(async (req) => {
       await svc.rpc('move_outbox_dead_letter', {
         p_id: row.id,
         p_worker_id: workerId,
+        p_lease_version: row.lease_version,
         p_error: 'reason' in decision ? decision.reason : 'unknown',
       })
       processed.push({ id: row.id, status: 'dead_letter_exception' })
