@@ -120,10 +120,13 @@ Deno.serve(async (req) => {
       });
       if (otpError || !otpResult?.[0]?.ok) return json({ error: "Código inválido ou expirado" }, 400);
 
-      const { error: claimError } = await svc.rpc("claim_invite_token", {
+      const { error: claimError } = await svc.rpc("claim_and_accept_invite", {
         p_invite_id: convite.id,
+        p_token: token,
         p_nonce: claims.nonce,
         p_expected_tenant: claims.tenant_id,
+        p_invite_kind: "convite_vinculacao",
+        p_ip_aceite: ip || null,
       });
       if (claimError) return json({ error: "Convite inválido, expirado ou já utilizado" }, 409);
 
@@ -137,12 +140,6 @@ Deno.serve(async (req) => {
       const otpId = otpResult?.[0]?.otp_id as string | undefined;
       const { data: consumedOtp } = await svc.from("validacoes_otp").select("numero_informado,cliente_id").eq("id", otpId).maybeSingle();
       await svc.from("clientes").update({ numero_whatsapp: consumedOtp?.numero_informado ?? convite.clientes?.numero_whatsapp ?? null, status_vinculo: "ativo" }).eq("id", convite.cliente_id);
-      await svc.from("convites_vinculacao").update({
-        status: "utilizado",
-        ip_aceite: ip || null,
-        data_aceite: new Date().toISOString(),
-      }).eq("id", convite.id).eq("status", "pendente");
-
       return json({ success: true, message: "Número validado com sucesso." });
     }
 

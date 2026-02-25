@@ -60,7 +60,7 @@ export default function VincularWhatsApp() {
       }
 
       setData(result);
-      if (result.convite.status === 'utilizado') {
+      if (result.convite.status === 'utilizado' || result.convite.status === 'ativo') {
         setStep('already-used');
       } else {
         setStep('info');

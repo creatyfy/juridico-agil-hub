@@ -117,10 +117,12 @@ Deno.serve(async (req) => {
       });
       if (otpError || !otpResult?.[0]?.ok) return jsonResponse({ error: "Código inválido ou expirado" }, 400);
 
-      const { error: claimError } = await supabase.rpc("claim_cliente_processo_invite_token", {
+      const { error: claimError } = await supabase.rpc("claim_and_accept_invite", {
         p_invite_id: invite.id,
+        p_token: token,
         p_nonce: claims.nonce,
         p_expected_tenant: claims.tenant_id,
+        p_invite_kind: "cliente_processo",
       });
       if (claimError) return jsonResponse({ error: "Convite inválido, expirado ou já utilizado" }, 409);
 
@@ -134,11 +136,6 @@ Deno.serve(async (req) => {
       if (!invite.clientes?.auth_user_id) {
         await supabase.from("clientes").update({ auth_user_id: user.id, status: "ativo" }).eq("id", invite.cliente_id);
       }
-
-      await supabase.from("cliente_processos").update({
-        status: "ativo",
-        data_aceite: new Date().toISOString(),
-      }).eq("id", invite.id).eq("status", "pendente");
 
       return jsonResponse({ success: true, status: "ativo" });
     }
