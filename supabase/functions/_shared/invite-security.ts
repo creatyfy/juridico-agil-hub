@@ -17,6 +17,13 @@ async function hmacSha256(secret: string, payload: string): Promise<string> {
   return toBase64Url(bytes)
 }
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let mismatch = 0
+  for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return mismatch === 0
+}
+
 export type InviteTokenClaims = {
   tenant_id: string
   cliente_id: string
@@ -42,12 +49,22 @@ export async function signInviteJwt(claims: Omit<InviteTokenClaims, 'iat' | 'exp
 export async function verifyInviteJwt(token: string, secret: string): Promise<InviteTokenClaims> {
   const [encodedHeader, encodedPayload, signature] = token.split('.')
   if (!encodedHeader || !encodedPayload || !signature) throw new Error('invalid_invite_token')
+
+  const parsedHeader = JSON.parse(fromBase64Url(encodedHeader)) as { alg?: string; typ?: string }
+  if (parsedHeader.alg !== 'HS256' || parsedHeader.typ !== 'JWT') {
+    throw new Error('invalid_invite_token_header')
+  }
+
   const signingInput = `${encodedHeader}.${encodedPayload}`
   const expectedSignature = await hmacSha256(secret, signingInput)
-  if (expectedSignature !== signature) throw new Error('invalid_invite_token_signature')
+  if (!timingSafeEqual(expectedSignature, signature)) throw new Error('invalid_invite_token_signature')
+
   const payload = JSON.parse(fromBase64Url(encodedPayload)) as InviteTokenClaims
   const now = Math.floor(Date.now() / 1000)
-  if (!payload.exp || payload.exp < now) throw new Error('invite_token_expired')
+  if (!payload.exp || !payload.iat) throw new Error('invalid_invite_token_claims')
+  if (payload.exp < now - 30) throw new Error('invite_token_expired')
+  if (payload.iat > now + 30) throw new Error('invite_token_clock_skew_exceeded')
+
   return payload
 }
 

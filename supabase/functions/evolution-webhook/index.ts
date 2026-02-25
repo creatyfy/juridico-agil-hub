@@ -281,65 +281,15 @@ Deno.serve(async (req) => {
   }
 
 
-  const { error: inboxError } = await svc
-    .from('inbound_events')
-    .insert({
-      tenant_id: tenantId,
-      instance_id: instanceId,
-      provider_message_id: providerMessageId,
-      payload,
-    })
-
-  if (inboxError) {
-    if (String(inboxError.message).toLowerCase().includes('duplicate') || String(inboxError.message).includes('inbound_events_tenant_id_instance_id_provider_message_id_key')) {
-      return new Response(JSON.stringify({ ok: true, duplicate: true, correlation_id: correlationId }), {
-        status: 202,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: inboxError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const { data: outboxMatch, error: crossValidationError } = await svc
-    .from('message_outbox')
-    .select('id')
-    .eq('provider_message_id', providerMessageId)
-    .eq('tenant_id', tenantId)
-    .eq('status', 'accepted')
-    .or(`aggregate_id.eq.${instanceId},payload->>instanceId.eq.${instanceId}`)
-    .maybeSingle()
-
-  if (crossValidationError || !outboxMatch) {
-    await persistWebhookFailure({
-      svc,
-      source: 'evolution-webhook',
-      correlationId,
-      tenantId,
-      eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
-      instanceName: instanceId,
-      httpStatus: 404,
-      errorMessage: crossValidationError?.message ?? 'cross_validation_failed',
-      payload,
-    })
-
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'cross_validation_failed' }), {
-      status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const { data, error } = await svc.rpc('mark_outbox_delivered', {
+  const { data, error } = await svc.rpc('process_inbound_event', {
     p_tenant_id: tenantId,
     p_instance_id: instanceId,
     p_provider_message_id: providerMessageId,
-    p_provider_response: payload,
+    p_payload: payload,
   })
 
   if (error) {
+
     await persistWebhookFailure({
       svc,
       source: 'evolution-webhook',
@@ -359,7 +309,8 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({
     ok: true,
-    updated: data ?? 0,
+    duplicate: Boolean(data?.[0]?.duplicate ?? false),
+    updated: Number(data?.[0]?.delivered_count ?? 0),
     provider_message_id: providerMessageId,
     tenant_id: tenantId,
     instance_id: instanceId,

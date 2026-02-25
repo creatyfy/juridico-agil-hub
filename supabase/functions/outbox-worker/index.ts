@@ -62,6 +62,16 @@ Deno.serve(async (req) => {
   for (const row of rows ?? []) {
     const payload = row.payload as OutboxPayload
 
+    const { data: attemptRegistered } = await svc.rpc('register_outbox_attempt', {
+      p_outbox_id: row.id,
+      p_lease_version: row.lease_version,
+    })
+
+    if (!attemptRegistered) {
+      processed.push({ id: row.id, status: 'lease_not_confirmed' })
+      continue
+    }
+
     try {
       const response = await fetchWithTimeout(`${EVOLUTION_API_URL}/message/sendText/${payload.instanceName}`, {
         method: 'POST',
@@ -87,7 +97,7 @@ Deno.serve(async (req) => {
           p_next_retry_at: new Date(Date.now() + decision.delayMs).toISOString(),
           p_error: decision.reason,
         })
-        if (row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id) }
+        if (ok.data && row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id).eq('status', 'queued') }
         processed.push({ id: row.id, status: ok.data ? 'retry' : 'lease_lost_retry' })
         continue
       }
@@ -99,30 +109,13 @@ Deno.serve(async (req) => {
           p_lease_version: row.lease_version,
           p_error: decision.reason,
         })
-        if (row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id) }
+        if (ok.data && row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id).eq('status', 'queued') }
         processed.push({ id: row.id, status: ok.data ? 'dead_letter' : 'lease_lost_dead_letter' })
         continue
       }
 
       const remoteJid = `${payload.destinationNumber}@s.whatsapp.net`
       const providerMessageId = evoData?.key?.id || evoData?.message?.id || crypto.randomUUID()
-
-      await svc.from('whatsapp_mensagens').insert({
-        instancia_id: payload.instanceId,
-        remote_jid: remoteJid,
-        direcao: 'out',
-        conteudo: payload.messageText,
-        tipo: 'text',
-        message_id: providerMessageId,
-      })
-
-      await svc.from('whatsapp_chats_cache').upsert({
-        instancia_id: payload.instanceId,
-        remote_jid: remoteJid,
-        ultima_mensagem: payload.messageText.substring(0, 100),
-        ultimo_timestamp: new Date().toISOString(),
-        direcao: 'out',
-      }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
 
       const accepted = await svc.rpc('complete_outbox_accepted', {
         p_id: row.id,
@@ -132,8 +125,27 @@ Deno.serve(async (req) => {
         p_provider_response: evoData,
       })
 
+      if (accepted.data) {
+        await svc.from('whatsapp_mensagens').insert({
+          instancia_id: payload.instanceId,
+          remote_jid: remoteJid,
+          direcao: 'out',
+          conteudo: payload.messageText,
+          tipo: 'text',
+          message_id: providerMessageId,
+        })
+
+        await svc.from('whatsapp_chats_cache').upsert({
+          instancia_id: payload.instanceId,
+          remote_jid: remoteJid,
+          ultima_mensagem: payload.messageText.substring(0, 100),
+          ultimo_timestamp: new Date().toISOString(),
+          direcao: 'out',
+        }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
+      }
+
       if (accepted.data && row.campaign_job_id) {
-        await svc.from('campaign_recipients').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('outbox_id', row.id)
+        await svc.from('campaign_recipients').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('outbox_id', row.id).eq('status', 'queued')
       }
 
       processed.push({
