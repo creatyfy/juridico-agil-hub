@@ -9,6 +9,23 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+type JuditStep = {
+  id?: string | number
+  date?: string
+  data?: string
+  type?: string
+  tipo?: string
+  content?: string
+  description?: string
+  descricao?: string
+  resumo?: string
+}
+
+function summarizeMovement(step: JuditStep): string {
+  const raw = step.resumo || step.description || step.descricao || step.content || 'Movimentação processual detectada'
+  return raw.slice(0, 400)
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -22,11 +39,9 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Optional: single processo sync (manual trigger by user)
     const body = await req.json().catch(() => ({}));
     const { processo_id } = body;
 
-    // If called with auth header, verify user
     const authHeader = req.headers.get('Authorization');
     let userId: string | null = null;
     if (authHeader) {
@@ -38,7 +53,6 @@ serve(async (req) => {
       userId = user?.id || null;
     }
 
-    // Get monitored processes
     let query = supabase
       .from('processo_monitoramentos')
       .select('*, processos(*)')
@@ -52,14 +66,13 @@ serve(async (req) => {
     const { data: monitoramentos, error: monError } = await query;
     if (monError) throw new Error(`Failed to fetch monitoramentos: ${monError.message}`);
 
-    const syncResults = [];
+    const syncResults: Array<Record<string, unknown>> = [];
 
     for (const mon of (monitoramentos || [])) {
       const processo = (mon as any).processos;
       if (!processo?.numero_cnj) continue;
 
       try {
-        // Create request on Judit for this CNJ
         const createData = await juditRequest({
           tenantKey: mon.user_id,
           apiKey: JUDIT_API_KEY,
@@ -76,16 +89,16 @@ serve(async (req) => {
 
         const requestId = (createData as any).request_id;
 
-        // Poll for completion (max 30s)
         let attempts = 0;
         let completed = false;
         while (attempts < 6 && !completed) {
-          await new Promise(r => setTimeout(r, 5000));
+          await new Promise((r) => setTimeout(r, 5000));
           const statusData = await juditRequest({
             tenantKey: mon.user_id,
             apiKey: JUDIT_API_KEY,
             path: `/requests/${requestId}`,
           }) as any;
+
           if (statusData.request_status === 'completed' || statusData.request_status === 'done') {
             completed = true;
           }
@@ -97,110 +110,81 @@ serve(async (req) => {
           continue;
         }
 
-        // Get results
         const resultsData = await juditRequest({
           tenantKey: mon.user_id,
           apiKey: JUDIT_API_KEY,
           path: `/responses?request_id=${requestId}`,
         });
 
-        // Extract movements from response
         const lawsuitData = Array.isArray(resultsData) ? resultsData[0] : resultsData;
-        const steps = lawsuitData?.steps || lawsuitData?.movimentacoes || [];
+        const steps: JuditStep[] = lawsuitData?.steps || lawsuitData?.movimentacoes || [];
 
+        let newMovementsCount = 0;
         if (steps.length > 0) {
-          // Get existing movement IDs to avoid duplicates
           const { data: existing } = await supabase
             .from('movimentacoes')
             .select('judit_movement_id')
             .eq('processo_id', processo.id)
             .not('judit_movement_id', 'is', null);
 
-          const existingIds = new Set((existing || []).map(e => e.judit_movement_id));
+          const existingIds = new Set((existing || []).map((e: { judit_movement_id: string }) => e.judit_movement_id));
 
           const newMovs = steps
-            .filter((s: any) => !existingIds.has(s.id?.toString()))
-            .map((s: any) => ({
+            .filter((s) => s.id && !existingIds.has(String(s.id)))
+            .map((s) => ({
               processo_id: processo.id,
               data_movimentacao: s.date || s.data,
               tipo: s.type || s.tipo,
               descricao: s.content || s.description || s.descricao || 'Movimentação',
-              conteudo: s.content || s.conteudo,
-              judit_movement_id: s.id?.toString(),
+              conteudo: s.content || s.descricao,
+              judit_movement_id: String(s.id),
             }));
 
           if (newMovs.length > 0) {
-            await supabase.from('movimentacoes').insert(newMovs);
+            const { error: movError } = await supabase.from('movimentacoes').insert(newMovs);
+            if (movError) throw movError;
 
-            // Create notification for process owner
-            await supabase.from('notificacoes').insert({
-              user_id: mon.user_id,
-              tipo: 'movimentacao',
-              titulo: 'Nova movimentação processual',
-              mensagem: `${newMovs.length} nova(s) movimentação(ões) no processo ${processo.numero_cnj}`,
-              link: `/processos/${processo.id}`,
-            });
+            const eventRows = newMovs.map((movement) => ({
+              tenant_id: mon.user_id,
+              event_type: 'PROCESS_MOVEMENT_DETECTED',
+              dedupe_key: `${processo.id}:${movement.judit_movement_id}`,
+              payload: {
+                processo_id: processo.id,
+                movimentacao_id: movement.judit_movement_id,
+                resumo: summarizeMovement(movement as unknown as JuditStep),
+              },
+            }));
 
-            // Notify linked clients
-            const { data: linkedClients } = await supabase
-              .from('cliente_processos')
-              .select('clientes(auth_user_id)')
-              .eq('processo_id', processo.id)
-              .eq('status', 'ativo');
+            const { error: evtError } = await supabase
+              .from('domain_events')
+              .upsert(eventRows, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true });
 
-            for (const lc of (linkedClients || [])) {
-              const authUserId = (lc as any).clientes?.auth_user_id;
-              if (authUserId) {
-                await supabase.from('notificacoes').insert({
-                  user_id: authUserId,
-                  tipo: 'movimentacao',
-                  titulo: 'Nova movimentação no seu processo',
-                  mensagem: `${newMovs.length} nova(s) movimentação(ões) no processo ${processo.numero_cnj}`,
-                  link: `/processos/${processo.id}`,
-                });
-              }
-            }
+            if (evtError) throw evtError;
+            newMovementsCount = newMovs.length;
           }
-
-          syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovs.length });
-
-          await logTenantAction(supabase, {
-            tenantId: mon.user_id,
-            userId: userId || mon.user_id,
-            action: 'processo_sincronizado',
-            entity: 'processo',
-            entityId: processo.id,
-            metadata: {
-              numero_cnj: processo.numero_cnj,
-              novas_movimentacoes: newMovs.length,
-              source: 'sync-movements',
-            },
-          });
-        } else {
-          syncResults.push({ cnj: processo.numero_cnj, newMovements: 0 });
-
-          await logTenantAction(supabase, {
-            tenantId: mon.user_id,
-            userId: userId || mon.user_id,
-            action: 'processo_sincronizado',
-            entity: 'processo',
-            entityId: processo.id,
-            metadata: {
-              numero_cnj: processo.numero_cnj,
-              novas_movimentacoes: 0,
-              source: 'sync-movements',
-            },
-          });
         }
 
-        // Update last sync time
+        syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovementsCount });
+
+        await logTenantAction(supabase, {
+          tenantId: mon.user_id,
+          userId: userId || mon.user_id,
+          action: 'processo_sincronizado',
+          entity: 'processo',
+          entityId: processo.id,
+          metadata: {
+            numero_cnj: processo.numero_cnj,
+            novas_movimentacoes: newMovementsCount,
+            source: 'sync-movements-event-driven',
+          },
+        });
+
         await supabase
           .from('processo_monitoramentos')
           .update({ ultima_sync: new Date().toISOString() })
           .eq('id', mon.id);
-
-      } catch (err) {
-        syncResults.push({ cnj: processo.numero_cnj, error: String(err) });
+      } catch {
+        syncResults.push({ cnj: processo.numero_cnj, error: 'sync_failed' });
       }
     }
 
