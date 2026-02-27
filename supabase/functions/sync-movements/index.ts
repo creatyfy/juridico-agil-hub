@@ -144,27 +144,24 @@ serve(async (req) => {
             const { error: movError } = await supabase.from('movimentacoes').insert(newMovs);
             if (movError) throw movError;
 
-            const eventRows = newMovs.map((movement) => ({
-              tenant_id: mon.user_id,
-              event_type: 'PROCESS_MOVEMENT_DETECTED',
-              dedupe_key: `${processo.id}:${movement.judit_movement_id}`,
-              payload: {
-                processo_id: processo.id,
-                movimentacao_id: movement.judit_movement_id,
-                resumo: summarizeMovement(movement as unknown as JuditStep),
-              },
-            }));
-
-            const { error: evtError } = await supabase
-              .from('domain_events')
-              .upsert(eventRows, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true });
-
-            if (evtError) throw evtError;
+            // Emit domain event so process-domain-events worker dispatches WhatsApp to linked clients
+            for (const mov of newMovs) {
+              await supabase.from('domain_events').upsert({
+                tenant_id: mon.user_id,
+                event_type: 'PROCESS_MOVEMENT_DETECTED',
+                dedupe_key: `${processo.id}:${mov.judit_movement_id ?? mov.descricao?.slice(0, 40)}`,
+                payload: {
+                  processo_id: processo.id,
+                  resumo: mov.descricao,
+                  total_movimentacoes: newMovs.length,
+                },
+              }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true });
+            }
             newMovementsCount = newMovs.length;
           }
         }
 
-        syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovementsCount });
+        syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovementsCount, domain_events_emitted: newMovementsCount });
 
         await logTenantAction(supabase, {
           tenantId: mon.user_id,
@@ -175,6 +172,7 @@ serve(async (req) => {
           metadata: {
             numero_cnj: processo.numero_cnj,
             novas_movimentacoes: newMovementsCount,
+            domain_events_emitted: newMovementsCount,
             source: 'sync-movements-event-driven',
           },
         });
