@@ -1,5 +1,12 @@
 import { maskCpf, maskPhone } from './security.ts'
 
+const SENSITIVE_KEYWORDS = ['mensagem', 'message', 'conteudo', 'payload', 'body', 'text', 'otp', 'cpf', 'telefone', 'phone']
+
+function isSensitiveKey(key: string): boolean {
+  const lowered = key.toLowerCase()
+  return SENSITIVE_KEYWORDS.some((token) => lowered.includes(token))
+}
+
 function sanitizePayload(payload: Record<string, unknown>): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {}
 
@@ -11,6 +18,16 @@ function sanitizePayload(payload: Record<string, unknown>): Record<string, unkno
 
     if (typeof value === 'string' && key.toLowerCase().includes('cpf')) {
       sanitized[key] = maskCpf(value)
+      continue
+    }
+
+    if (typeof value === 'string' && isSensitiveKey(key)) {
+      sanitized[key] = '[REDACTED]'
+      continue
+    }
+
+    if (value && typeof value === 'object' && isSensitiveKey(key)) {
+      sanitized[key] = '[REDACTED_OBJECT]'
       continue
     }
 
