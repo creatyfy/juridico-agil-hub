@@ -27,10 +27,10 @@ BEGIN
   END IF;
 
   PERFORM net.http_post(
-    url := concat(current_setting('app.settings.supabase_url', true), '/functions/v1/outbox-worker'),
+    url := 'https://kbnnydiiwtoeeqtijygj.supabase.co/functions/v1/outbox-worker',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', concat('Bearer ', current_setting('app.settings.service_role_key', true))
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtibm55ZGlpd3RvZWVxdGlqeWdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjU1NTAsImV4cCI6MjA4NjI0MTU1MH0.jmo9Sq2ppfUq3yzRXXxjF5KYW3Y3fd2kYKPlVdIYarg'
     ),
     body := '{}'::jsonb
   );
@@ -57,10 +57,10 @@ BEGIN
   END IF;
 
   PERFORM net.http_post(
-    url := concat(current_setting('app.settings.supabase_url', true), '/functions/v1/process-domain-events'),
+    url := 'https://kbnnydiiwtoeeqtijygj.supabase.co/functions/v1/process-domain-events',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', concat('Bearer ', current_setting('app.settings.service_role_key', true))
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtibm55ZGlpd3RvZWVxdGlqeWdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjU1NTAsImV4cCI6MjA4NjI0MTU1MH0.jmo9Sq2ppfUq3yzRXXxjF5KYW3Y3fd2kYKPlVdIYarg'
     ),
     body := '{}'::jsonb
   );
@@ -87,10 +87,10 @@ BEGIN
   END IF;
 
   PERFORM net.http_post(
-    url := concat(current_setting('app.settings.supabase_url', true), '/functions/v1/process-whatsapp-inbound'),
+    url := 'https://kbnnydiiwtoeeqtijygj.supabase.co/functions/v1/process-whatsapp-inbound',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', concat('Bearer ', current_setting('app.settings.service_role_key', true))
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtibm55ZGlpd3RvZWVxdGlqeWdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjU1NTAsImV4cCI6MjA4NjI0MTU1MH0.jmo9Sq2ppfUq3yzRXXxjF5KYW3Y3fd2kYKPlVdIYarg'
     ),
     body := '{}'::jsonb
   );
