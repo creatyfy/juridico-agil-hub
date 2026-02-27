@@ -1,11 +1,15 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { handleAuthenticationFlow, isPhoneVerified } from './services/auth.ts'
 import { normalizePhone } from './services/evolution.ts'
 import { unifiedErrorResponse } from './services/messages.ts'
 import { logError, logInfo } from './services/logger.ts'
-import { handleIncomingMessage } from './services/orchestrator.ts'
-import type { RequestContext } from './services/types.ts'
 import { validateWebhookSignature } from './services/webhook-security.ts'
+
+type InboundRpcResult = {
+  inbound_message_id: string
+  queue_id: string
+  inserted: boolean
+  queue_status: string
+}
 
 async function persistWebhookFailure(input: {
   supabase: ReturnType<typeof createClient>
@@ -17,7 +21,6 @@ async function persistWebhookFailure(input: {
   httpStatus: number
   errorMessage: string
   errorStack?: string
-  payload?: unknown
 }) {
   const { error } = await input.supabase.from('webhook_failures').insert({
     tenant_id: input.tenantId ?? null,
@@ -28,7 +31,10 @@ async function persistWebhookFailure(input: {
     http_status: input.httpStatus,
     error_message: input.errorMessage,
     error_stack: input.errorStack ?? null,
-    payload: input.payload ?? null,
+    payload: {
+      redacted: true,
+      reason: 'lgpd_minimal_retention',
+    },
   })
 
   if (error) {
@@ -36,14 +42,10 @@ async function persistWebhookFailure(input: {
   }
 }
 
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-request-id, x-correlation-id, x-webhook-signature, x-webhook-timestamp, x-webhook-nonce',
 }
-
-const WINDOW_SECONDS = 60
-const MAX_MESSAGES_PER_WINDOW = 20
 
 function jsonResponse(payload: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -61,31 +63,20 @@ function extractMessageText(msg: any): string | null {
     || null
 }
 
-async function enforceRateLimit(ctx: RequestContext): Promise<boolean> {
-  const now = new Date()
-  const windowStart = new Date(now.getTime() - WINDOW_SECONDS * 1000).toISOString()
+function extractProviderMessageId(item: any): string | null {
+  return item?.key?.id ?? item?.messageId ?? item?.id ?? null
+}
 
-  const { data } = await ctx.supabase
-    .from('whatsapp_rate_limits')
-    .select('id, counter, window_start')
-    .eq('tenant_id', ctx.tenantId)
-    .eq('telefone', ctx.phone)
-    .maybeSingle()
-
-  if (!data || new Date(data.window_start).getTime() < new Date(windowStart).getTime()) {
-    await ctx.supabase.from('whatsapp_rate_limits').upsert({
-      tenant_id: ctx.tenantId,
-      telefone: ctx.phone,
-      window_start: now.toISOString(),
-      counter: 1,
-    }, { onConflict: 'tenant_id,telefone', ignoreDuplicates: false })
-    return true
+function buildSafePayload(item: any): Record<string, unknown> {
+  return {
+    key: {
+      id: item?.key?.id ?? null,
+      remoteJid: item?.key?.remoteJid ?? null,
+      fromMe: Boolean(item?.key?.fromMe),
+    },
+    messageTimestamp: item?.messageTimestamp ?? null,
+    pushName: item?.pushName ? '[REDACTED]' : null,
   }
-
-  if (data.counter >= MAX_MESSAGES_PER_WINDOW) return false
-
-  await ctx.supabase.from('whatsapp_rate_limits').update({ counter: data.counter + 1 }).eq('id', data.id)
-  return true
 }
 
 Deno.serve(async (req) => {
@@ -117,7 +108,6 @@ Deno.serve(async (req) => {
         correlationId,
         httpStatus: 400,
         errorMessage: 'invalid_payload',
-        payload: body,
       })
       return jsonResponse({ ok: false, correlation_id: correlationId, error: 'invalid_payload' }, 400)
     }
@@ -153,57 +143,63 @@ Deno.serve(async (req) => {
           ? [body.data]
           : []
 
+    let enqueuedCount = 0
+    let duplicateCount = 0
+
     for (const item of payloadMessages) {
       if (!item?.key || item.key?.fromMe) continue
 
-      const incomingText = extractMessageText(item)
+      const incomingText = extractMessageText(item)?.trim()
       if (!incomingText) continue
+
+      const providerMessageId = extractProviderMessageId(item)
+      if (!providerMessageId) continue
 
       const rawJid = item.key.remoteJid
       if (!rawJid || rawJid === 'status@broadcast' || rawJid.includes('@g.us')) continue
 
       const phone = normalizePhone(rawJid)
-      const ctx: RequestContext = {
-        requestId: correlationId,
-        supabase,
-        tenantId: instance.user_id,
-        instanceName: instance.instance_name,
-        instanceId: instance.id,
-        phone,
-        message: incomingText.trim(),
-      }
 
-      logInfo('incoming_message', {
-        correlation_id: correlationId,
-        tenant_id: ctx.tenantId,
-        instance_id: ctx.instanceId,
-        telefone: phone,
+      const { data, error } = await supabase.rpc('enqueue_inbound_message', {
+        p_tenant_id: instance.user_id,
+        p_instance_id: instance.id,
+        p_instance_name: instance.instance_name,
+        p_provider_message_id: providerMessageId,
+        p_phone: phone,
+        p_message: incomingText,
+        p_payload: buildSafePayload(item),
       })
 
-      const canProceed = await enforceRateLimit(ctx)
-      if (!canProceed) {
-        logInfo('rate_limit_hit', { correlation_id: correlationId, tenant_id: ctx.tenantId, telefone: phone })
+      if (error) {
+        logError('inbound_enqueue_failed', {
+          correlation_id: correlationId,
+          tenant_id: instance.user_id,
+          instance_id: instance.id,
+          provider_message_id: providerMessageId,
+          error: error.message,
+        })
         continue
       }
 
-      const verified = await isPhoneVerified(ctx)
-      if (!verified.verified) {
-        const authResult = await handleAuthenticationFlow(ctx)
-        if (!authResult.authenticated || !authResult.clienteId) continue
+      const result = (data?.[0] ?? null) as InboundRpcResult | null
+      if (!result) continue
 
-        await handleIncomingMessage({ ...ctx, clienteId: authResult.clienteId })
-        continue
+      if (result.inserted) {
+        enqueuedCount += 1
+      } else {
+        duplicateCount += 1
       }
-
-      if (!verified.clienteId) {
-        logError('verified_without_client', { correlation_id: correlationId, tenant_id: ctx.tenantId, telefone: phone })
-        continue
-      }
-
-      await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
     }
 
-    return jsonResponse({ ok: true, correlation_id: correlationId })
+    logInfo('inbound_persisted_and_queued', {
+      correlation_id: correlationId,
+      tenant_id: instance.user_id,
+      instance_id: instance.id,
+      enqueued_count: enqueuedCount,
+      duplicate_count: duplicateCount,
+    })
+
+    return jsonResponse({ ok: true, correlation_id: correlationId, enqueued: enqueuedCount, duplicates: duplicateCount })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const stack = error instanceof Error ? error.stack : undefined
@@ -217,7 +213,6 @@ Deno.serve(async (req) => {
       httpStatus: 500,
       errorMessage: message,
       errorStack: stack,
-      payload: body,
     })
 
     logError('webhook_whatsapp_failed', {
