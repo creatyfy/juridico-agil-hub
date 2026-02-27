@@ -1,22 +1,37 @@
 import { maskCpf, maskPhone } from './security.ts'
 
-function sanitizePayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {}
+function sanitizeValue(key: string, value: unknown): unknown {
+  const normalizedKey = key.toLowerCase()
 
-  for (const [key, value] of Object.entries(payload)) {
-    if (typeof value === 'string' && key.toLowerCase().includes('telefone')) {
-      sanitized[key] = maskPhone(value)
-      continue
+  if (typeof value === 'string') {
+    if (normalizedKey.includes('cpf')) return maskCpf(value)
+    if (normalizedKey.includes('telefone') || normalizedKey.includes('phone')) return maskPhone(value)
+    if (normalizedKey.includes('mensagem') || normalizedKey.includes('message') || normalizedKey.includes('conteudo')) {
+      return '[redacted_message_content]'
     }
-
-    if (typeof value === 'string' && key.toLowerCase().includes('cpf')) {
-      sanitized[key] = maskCpf(value)
-      continue
-    }
-
-    sanitized[key] = value
+    return value
   }
 
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeValue(key, item))
+  }
+
+  if (value && typeof value === 'object') {
+    const nested: Record<string, unknown> = {}
+    for (const [nestedKey, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      nested[nestedKey] = sanitizeValue(nestedKey, nestedValue)
+    }
+    return nested
+  }
+
+  return value
+}
+
+function sanitizePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(payload)) {
+    sanitized[key] = sanitizeValue(key, value)
+  }
   return sanitized
 }
 
@@ -30,6 +45,7 @@ function toLogLine(level: 'info' | 'error', event: string, payload: Record<strin
     level,
     event,
     retention_policy: 'minimal',
+    lgpd_safe: true,
     ...sanitized,
   })
 }

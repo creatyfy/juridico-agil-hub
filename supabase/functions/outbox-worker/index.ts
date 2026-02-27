@@ -13,6 +13,8 @@ const MAX_ATTEMPTS = Number(Deno.env.get('OUTBOX_MAX_ATTEMPTS') ?? '8')
 const BATCH_SIZE = Number(Deno.env.get('OUTBOX_BATCH_SIZE') ?? '20')
 const LEASE_SECONDS = Number(Deno.env.get('OUTBOX_LEASE_SECONDS') ?? '45')
 const REAPER_LIMIT = Number(Deno.env.get('OUTBOX_REAPER_LIMIT') ?? '200')
+const ACCEPTED_RECONCILE_LIMIT = Number(Deno.env.get('OUTBOX_ACCEPTED_RECONCILE_LIMIT') ?? '200')
+const ACCEPTED_RECONCILE_AGE_MINUTES = Number(Deno.env.get('OUTBOX_ACCEPTED_RECONCILE_AGE_MINUTES') ?? '30')
 const REQUEST_TIMEOUT_MS = Number(Deno.env.get('OUTBOX_PROVIDER_TIMEOUT_MS') ?? '10000')
 
 const TENANT_BUCKET_CAPACITY = Number(Deno.env.get('TENANT_BUCKET_CAPACITY') ?? '30')
@@ -42,6 +44,10 @@ Deno.serve(async (req) => {
   const workerId = buildWorkerId(req)
 
   await svc.rpc('reap_orphaned_outbox_messages', { p_limit: REAPER_LIMIT, p_retry_delay_seconds: 5 })
+  await svc.rpc('reconcile_stuck_outbox_accepted', {
+    p_age_minutes: ACCEPTED_RECONCILE_AGE_MINUTES,
+    p_limit: ACCEPTED_RECONCILE_LIMIT,
+  })
 
   const { data: rows, error: claimError } = await svc.rpc('claim_message_outbox_with_lease', {
     p_batch_size: BATCH_SIZE,
