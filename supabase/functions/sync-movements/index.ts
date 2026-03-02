@@ -151,7 +151,7 @@ serve(async (req) => {
     if (authHeader) {
       const supabaseAnon = Deno.env.get('SUPABASE_ANON_KEY')!;
       const supabaseAuth = createClient(supabaseUrl, supabaseAnon, {
-        global: { headers: { Authorization: authHeader } }
+        global: { headers: { Authorization: authHeader } },
       });
       const { data: { user } } = await supabaseAuth.auth.getUser();
       userId = user?.id || null;
@@ -177,16 +177,13 @@ serve(async (req) => {
       if (!processo?.numero_cnj) continue;
 
       try {
-        const requestId = mon.judit_request_id;
-        const requestStatus = mon.judit_request_status;
-        const requestAttempts = mon.judit_request_attempts || 0;
-
-        if (requestId && requestStatus === 'pending') {
+        if (mon.judit_request_id && mon.judit_request_status === 'pending') {
+          const requestId = mon.judit_request_id;
           const statusData = await juditRequest({
             tenantKey: mon.user_id,
             apiKey: JUDIT_API_KEY,
             path: `/requests/${requestId}`,
-          }) as any;
+          }) as { request_status?: string };
 
           if (statusData.request_status === 'completed' || statusData.request_status === 'done') {
             await collectCompletedRequest({
@@ -200,7 +197,7 @@ serve(async (req) => {
             continue;
           }
 
-          const nextAttempts = requestAttempts + 1;
+          const nextAttempts = (mon.judit_request_attempts || 0) + 1;
           if (nextAttempts >= 3) {
             await supabase
               .from('processo_monitoramentos')
@@ -232,9 +229,9 @@ serve(async (req) => {
               response_type: 'lawsuit',
             },
           },
-        });
+        }) as { request_id?: string };
 
-        const newRequestId = (createData as any).request_id;
+        const newRequestId = createData.request_id;
         await supabase
           .from('processo_monitoramentos')
           .update({
