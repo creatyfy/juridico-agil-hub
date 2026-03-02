@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const enqueued: Array<{ reference: string; payload: any }> = []
+let enqueueMockResult: any = { ok: true, status: 'queued', idempotencyKey: 'test-key', outboxId: 'outbox-1' }
 
 vi.mock('../../supabase/functions/_shared/message-outbox-enqueue.ts', () => ({
   enqueueMessage: vi.fn(async (args: any) => {
     enqueued.push({ reference: args.reference, payload: args.payload })
-    return { ok: true, status: 'queued', idempotencyKey: 'test-key', outboxId: 'outbox-1' }
+    return enqueueMockResult
   }),
 }))
 
@@ -21,7 +22,6 @@ class TestSupabase {
   from(table: string) {
     const tables = this.tables
     const filters: Record<string, any> = {}
-    let insertPayload: any = null
     let updatePayload: any = null
 
     const api: any = {
@@ -34,7 +34,6 @@ class TestSupabase {
       limit: () => api,
       maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
       insert: (payload: any) => {
-        insertPayload = payload
         if (!tables[table]) tables[table] = []
         const arr = Array.isArray(payload) ? payload : [payload]
         for (const r of arr) tables[table].push({ id: crypto.randomUUID(), ...r })
@@ -77,6 +76,7 @@ class TestSupabase {
 describe('process movement whatsapp notifications', () => {
   beforeEach(() => {
     enqueued.length = 0
+    enqueueMockResult = { ok: true, status: 'queued', idempotencyKey: 'test-key', outboxId: 'outbox-1' }
     ;(globalThis as any).Deno = { env: { get: () => undefined }, serve: vi.fn() }
   })
 
@@ -96,6 +96,7 @@ describe('process movement whatsapp notifications', () => {
 
     expect(enqueued).toHaveLength(1)
     expect(svc.tables.process_movement_notifications).toHaveLength(1)
+    expect(svc.tables.process_movement_notifications[0].outbox_id).toBe('outbox-1')
   })
 
   it('não reenvia movimentação duplicada e retry mantém idempotência por contato', async () => {
@@ -114,5 +115,25 @@ describe('process movement whatsapp notifications', () => {
 
     expect(enqueued).toHaveLength(0)
     expect(svc.tables.process_movement_notifications).toHaveLength(1)
+  })
+
+  it('resolve outbox_id obrigatório em duplicate por idempotency_key', async () => {
+    const { processMovementDetected } = await import('../../supabase/functions/process-domain-events/index.ts')
+    enqueueMockResult = { ok: true, status: 'duplicate', idempotencyKey: 'test-key' }
+
+    const svc = new TestSupabase({
+      processos: [{ id: 'processo-1', numero_cnj: '0001', user_id: 'tenant-1' }],
+      whatsapp_contacts: [{ id: 'c1', tenant_id: 'tenant-1', process_id: 'processo-1', phone_number: '551199', verified: true, notifications_opt_in: true, last_notification_sent_at: null }],
+      whatsapp_instancias: [{ id: 'inst-1', instance_name: 'inst', user_id: 'tenant-1', status: 'connected', created_at: '2026-01-01T00:00:00Z' }],
+      message_outbox: [{ id: 'outbox-existing', tenant_id: 'tenant-1', idempotency_key: 'test-key' }],
+      notificacoes: [],
+      conversation_logs: [],
+      process_movement_notifications: [],
+    }) as any
+
+    await processMovementDetected(svc, { id: 'evt-1', payload: { processo_id: 'processo-1', movement_id: '11111111-1111-1111-1111-111111111111', resumo: 'mov', total_movimentacoes: 1 } })
+
+    expect(svc.tables.process_movement_notifications).toHaveLength(1)
+    expect(svc.tables.process_movement_notifications[0].outbox_id).toBe('outbox-existing')
   })
 })

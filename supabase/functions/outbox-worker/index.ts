@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
           await svc.rpc('update_process_movement_notification_status', {
             p_tenant_id: row.tenant_id,
             p_outbox_id: row.id,
-            p_status: 'failed',
+            p_status: 'retry',
             p_attempts: nextAttempts,
             p_last_error: decision.reason,
           })
@@ -209,7 +209,7 @@ Deno.serve(async (req) => {
           await svc.rpc('update_process_movement_notification_status', {
             p_tenant_id: row.tenant_id,
             p_outbox_id: row.id,
-            p_status: 'failed',
+            p_status: 'retry',
             p_attempts: Number(row.attempts ?? 0),
             p_last_error: decision.reason,
           })

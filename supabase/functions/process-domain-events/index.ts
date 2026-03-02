@@ -141,6 +141,27 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
       throw new Error(`enqueue_failed:${enqueue.status}:${enqueue.reason ?? 'unknown'}`)
     }
 
+    let resolvedOutboxId = enqueue.outboxId ?? null
+
+    if (enqueue.status === 'duplicate' && !resolvedOutboxId) {
+      const { data: existingOutbox, error: existingOutboxError } = await svc
+        .from('message_outbox')
+        .select('id')
+        .eq('tenant_id', processo.user_id)
+        .eq('idempotency_key', enqueue.idempotencyKey)
+        .maybeSingle()
+
+      if (existingOutboxError) {
+        throw new Error(`enqueue_duplicate_outbox_lookup_failed:${existingOutboxError.message}`)
+      }
+
+      resolvedOutboxId = existingOutbox?.id ?? null
+    }
+
+    if (!resolvedOutboxId) {
+      throw new Error(`enqueue_outbox_id_missing:${enqueue.status}`)
+    }
+
     await enqueueOutboundLog(svc, processo.user_id, destination, messageText, 'PROCESS_STATUS')
 
     await svc
@@ -156,7 +177,7 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
           process_id: processo.id,
           movement_id: movementId,
           contact_id: contact.id,
-          outbox_id: enqueue.outboxId ?? null,
+          outbox_id: resolvedOutboxId,
           status: 'queued',
           attempts: 0,
           last_error: null,
