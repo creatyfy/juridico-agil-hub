@@ -150,14 +150,13 @@ export default function Checkout() {
   const plan = PLAN_CATALOG.find((item) => item.slug === planSlug);
 
   useEffect(() => {
-    // Aguarda searchParams estarem disponíveis antes de validar
     if (!planSlug && !billingCycle) return;
 
     const isInvalidCycle = !billingCycle;
     const isInvalidPlan = !plan;
     const isInvalidEnterpriseProcess = plan?.isEnterprise
       ? !processesCount || !processOptions.includes(processesCount)
-      : false; // planos normais (standard, simple, explorer) não precisam do parâmetro processes
+      : false;
 
     if (isInvalidCycle || isInvalidPlan || isInvalidEnterpriseProcess) {
       navigate('/planos', { replace: true });
