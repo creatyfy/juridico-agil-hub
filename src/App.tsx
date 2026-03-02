@@ -30,16 +30,22 @@ const queryClient = new QueryClient();
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="h-8 w-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-      </div>
-    );
-  }
   return (
     <Routes>
-      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Index />} />
+      <Route
+        path="/"
+        element={
+          loading ? (
+            <div className="min-h-screen flex items-center justify-center">
+              <div className="h-8 w-8 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+            </div>
+          ) : isAuthenticated ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Index />
+          )
+        }
+      />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />} />
       <Route path="/cadastro/advogado" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <CadastroAdvogado />} />
       <Route path="/convite/:token" element={<AceitarConvite />} />

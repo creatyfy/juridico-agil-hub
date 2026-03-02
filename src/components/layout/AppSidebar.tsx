@@ -10,6 +10,7 @@ import {
   LogOut,
   Shield,
   BarChart3,
+  CreditCard,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -29,10 +30,12 @@ const advogadoMenu: MenuItem[] = [
   { label: 'Clientes', icon: Users, path: '/clientes' },
   { label: 'Atendimento', icon: MessageSquare, path: '/atendimento' },
   { label: 'Configurações', icon: Settings, path: '/configuracoes' },
+  { label: 'Planos', icon: CreditCard, path: '/planos' },
 ];
 
 const clienteMenu: MenuItem[] = [
   { label: 'Meus Processos', icon: FileText, path: '/dashboard' },
+  { label: 'Planos', icon: CreditCard, path: '/planos' },
 ];
 
 const adminMenu: MenuItem[] = [
@@ -42,6 +45,7 @@ const adminMenu: MenuItem[] = [
   { label: 'Monitoramento', icon: BarChart3, path: '/admin/monitoramento' },
   { label: 'Integrações', icon: Shield, path: '/admin/integracoes' },
   { label: 'Configurações', icon: Settings, path: '/configuracoes' },
+  { label: 'Planos', icon: CreditCard, path: '/planos' },
 ];
 
 export default function AppSidebar() {
