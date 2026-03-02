@@ -343,6 +343,125 @@ export type Database = {
         }
         Relationships: []
       }
+      orders: {
+        Row: {
+          address_city: string
+          address_complement: string | null
+          address_neighborhood: string
+          address_number: string
+          address_state: string
+          address_street: string
+          address_zip: string
+          billing_cycle: string
+          created_at: string
+          customer_document: string
+          customer_email: string
+          customer_name: string
+          customer_phone: string
+          id: number
+          payment_method: string
+          plan_id: number
+          processes_count: number | null
+          status: string
+          total_amount: number
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          address_city: string
+          address_complement?: string | null
+          address_neighborhood: string
+          address_number: string
+          address_state: string
+          address_street: string
+          address_zip: string
+          billing_cycle: string
+          created_at?: string
+          customer_document: string
+          customer_email: string
+          customer_name: string
+          customer_phone: string
+          id?: number
+          payment_method: string
+          plan_id: number
+          processes_count?: number | null
+          status?: string
+          total_amount: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          address_city?: string
+          address_complement?: string | null
+          address_neighborhood?: string
+          address_number?: string
+          address_state?: string
+          address_street?: string
+          address_zip?: string
+          billing_cycle?: string
+          created_at?: string
+          customer_document?: string
+          customer_email?: string
+          customer_name?: string
+          customer_phone?: string
+          id?: number
+          payment_method?: string
+          plan_id?: number
+          processes_count?: number | null
+          status?: string
+          total_amount?: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      plans: {
+        Row: {
+          activation_fee: number | null
+          created_at: string
+          features: Json
+          id: number
+          is_enterprise: boolean
+          max_cadastros: number | null
+          name: string
+          price_annual: number | null
+          price_monthly: number
+          slug: string
+        }
+        Insert: {
+          activation_fee?: number | null
+          created_at?: string
+          features?: Json
+          id?: number
+          is_enterprise?: boolean
+          max_cadastros?: number | null
+          name: string
+          price_annual?: number | null
+          price_monthly: number
+          slug: string
+        }
+        Update: {
+          activation_fee?: number | null
+          created_at?: string
+          features?: Json
+          id?: number
+          is_enterprise?: boolean
+          max_cadastros?: number | null
+          name?: string
+          price_annual?: number | null
+          price_monthly?: number
+          slug?: string
+        }
+        Relationships: []
+      }
       processo_monitoramentos: {
         Row: {
           ativo: boolean
