@@ -19,7 +19,7 @@ export type DbState = {
   clientes: Array<{ id: string; tenant_id: string; cpf: string; nome: string }>
   cliente_processos: Array<{ id: string; cliente_id: string; processo_id: string; status: string }>
   processos: Array<{ id: string; user_id: string; numero_cnj: string }>
-  process_movement_notifications: Array<{ id: string; tenant_id: string; process_id: string; movement_id: string; contact_id: string; notified_at: string }>
+  process_movement_notifications: Array<{ id: string; tenant_id: string; process_id: string; movement_id: string; contact_id: string; notified_at: string; status?: 'queued' | 'sent' | 'delivered' | 'failed' | 'dead_letter'; outbox_id?: string | null; last_error?: string | null; attempts?: number; updated_at?: string }>
   otp_validacoes: Array<{ id: string; tenant_id: string; telefone: string; otp_hash: string; expires_at: string; tentativas: number }>
   whatsapp_auth_rate_limits: Array<{ id: string; tenant_id: string; scope_type: 'PHONE' | 'TENANT_CPF'; scope_hash: string; window_start: string; counter: number }>
   webhook_replay_guard: Array<{ id: string; nonce_hash: string; timestamp_seconds: number; expires_at: string }>
