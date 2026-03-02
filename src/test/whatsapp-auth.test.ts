@@ -68,6 +68,7 @@ describe('whatsapp auth flow hardening', () => {
     expect(verification.verified).toBe(true)
     expect(state.otp_validacoes).toHaveLength(0)
     expect(state.whatsapp_contacts[0]?.conversation_state).toBe('AUTHENTICATED')
+    expect(state.whatsapp_contacts[0]?.process_id).toBe('processo-1')
 
     // Cleanup: estado isolado por teste (novo state em cada case).
   })
@@ -220,5 +221,64 @@ describe('whatsapp auth flow hardening', () => {
       webhookRejected: 0,
     })
     expect(metrics.clockDriftSeconds).toEqual([42])
+  })
+
+
+  it('fluxo com múltiplos processos exige seleção numérica e vincula process_id escolhido', async () => {
+    const state = createDbState()
+    state.cliente_processos.push({ id: 'cp-2', cliente_id: 'cliente-1', processo_id: 'processo-2', status: 'ativo' })
+    state.processos.push({ id: 'processo-2', user_id: 'tenant-1', numero_cnj: '0009876-10.2023.8.26.0100' })
+
+    let ctx = await makeCtx(state, 'Oi')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    ctx = await makeCtx(state, '12345678909')
+    await ctx.handleAuthenticationFlow(ctx.baseCtx)
+
+    const otp = sentMessages.at(-1)?.text.match(/(\d{6})/)?.[1]
+    expect(otp).toBeTruthy()
+
+    ctx = await makeCtx(state, otp!)
+    const otpResult = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+    expect(otpResult.authenticated).toBe(false)
+    expect(state.whatsapp_contacts[0]?.conversation_state).toBe('WAITING_PROCESS_SELECTION')
+
+    ctx = await makeCtx(state, '2')
+    const selectedResult = await ctx.handleAuthenticationFlow(ctx.baseCtx)
+
+    expect(selectedResult.authenticated).toBe(true)
+    expect(state.whatsapp_contacts[0]?.conversation_state).toBe('AUTHENTICATED')
+    expect(state.whatsapp_contacts[0]?.process_id).toBe('processo-2')
+  })
+
+  it('resposta SIM ativa opt-in somente para contato verificado', async () => {
+    const state = createDbState()
+    state.whatsapp_contacts.push({
+      id: 'contact-1',
+      tenant_id: 'tenant-1',
+      phone_number: '5511999999999',
+      client_id: 'cliente-1',
+      process_id: 'processo-1',
+      verified: true,
+      conversation_state: 'AUTHENTICATED',
+      notifications_opt_in: false,
+      cpf_attempts: 0,
+      otp_attempts: 0,
+      blocked_until: null,
+    })
+
+    const { tryActivateNotificationsOptIn } = await import('../../supabase/functions/webhook-whatsapp/services/auth.ts')
+    const supabase = new FakeSupabase(state)
+    const activated = await tryActivateNotificationsOptIn({
+      requestId: 'req-optin',
+      supabase: supabase as any,
+      tenantId: 'tenant-1',
+      instanceName: 'inst-1',
+      instanceId: 'instance-id',
+      phone: '5511999999999',
+      message: 'SIM',
+    })
+
+    expect(activated).toBe(true)
+    expect(state.whatsapp_contacts[0]?.notifications_opt_in).toBe(true)
   })
 })

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
+export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'WAITING_PROCESS_SELECTION' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
 
 export type RequestContext = {
   requestId: string
