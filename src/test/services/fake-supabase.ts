@@ -1,4 +1,4 @@
-export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
+export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'WAITING_PROCESS_SELECTION' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
 
 export type DbState = {
   whatsapp_contacts: Array<{
@@ -17,6 +17,9 @@ export type DbState = {
     updated_at?: string
   }>
   clientes: Array<{ id: string; tenant_id: string; cpf: string; nome: string }>
+  cliente_processos: Array<{ id: string; cliente_id: string; processo_id: string; status: string }>
+  processos: Array<{ id: string; user_id: string; numero_cnj: string }>
+  process_movement_notifications: Array<{ id: string; tenant_id: string; process_id: string; movement_id: string; contact_id: string; notified_at: string }>
   otp_validacoes: Array<{ id: string; tenant_id: string; telefone: string; otp_hash: string; expires_at: string; tentativas: number }>
   whatsapp_auth_rate_limits: Array<{ id: string; tenant_id: string; scope_type: 'PHONE' | 'TENANT_CPF'; scope_hash: string; window_start: string; counter: number }>
   webhook_replay_guard: Array<{ id: string; nonce_hash: string; timestamp_seconds: number; expires_at: string }>
@@ -36,6 +39,9 @@ export function createDbState(): DbState {
   return {
     whatsapp_contacts: [],
     clientes: [{ id: 'cliente-1', tenant_id: 'tenant-1', cpf: '12345678909', nome: 'Cliente Teste' }],
+    cliente_processos: [{ id: 'cp-1', cliente_id: 'cliente-1', processo_id: 'processo-1', status: 'ativo' }],
+    processos: [{ id: 'processo-1', user_id: 'tenant-1', numero_cnj: '0001234-56.2024.8.26.0100' }],
+    process_movement_notifications: [],
     otp_validacoes: [],
     whatsapp_auth_rate_limits: [],
     webhook_replay_guard: [],
@@ -198,6 +204,15 @@ class QueryBuilder {
 
   private resolveRows() {
     const tableRows = this.getRows()
-    return tableRows.filter((row: any) => Object.entries(this.filters).every(([column, value]) => row[column] === value))
+    const rows = tableRows.filter((row: any) => Object.entries(this.filters).every(([column, value]) => row[column] === value))
+
+    if (this.table === 'cliente_processos') {
+      return rows.map((row: any) => ({
+        ...row,
+        processos: this.state.processos?.find((p: any) => p.id === row.processo_id) ?? null,
+      }))
+    }
+
+    return rows
   }
 }

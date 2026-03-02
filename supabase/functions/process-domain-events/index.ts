@@ -38,11 +38,12 @@ async function enqueueOutboundLog(
   })
 }
 
-async function processMovementDetected(svc: ReturnType<typeof createClient>, event: any): Promise<void> {
+export async function processMovementDetected(svc: ReturnType<typeof createClient>, event: any): Promise<void> {
   const payload = event.payload ?? {}
   const processoId = payload.processo_id as string | undefined
   const resumo = (payload.resumo as string | undefined) ?? 'Nova movimentação processual detectada.'
   const totalMovimentacoes = Number(payload.total_movimentacoes ?? 1)
+  const movementId = payload.movement_id as string | undefined
 
   if (!processoId) throw new Error('missing_processo_id')
 
@@ -70,6 +71,8 @@ async function processMovementDetected(svc: ReturnType<typeof createClient>, eve
     .select('id, phone_number, client_id, verified, notifications_opt_in, last_notification_sent_at')
     .eq('tenant_id', processo.user_id)
     .eq('process_id', processo.id)
+    .eq('verified', true)
+    .eq('notifications_opt_in', true)
 
   const { data: instance } = await svc
     .from('whatsapp_instancias')
@@ -83,33 +86,21 @@ async function processMovementDetected(svc: ReturnType<typeof createClient>, eve
   if (!instance) return
 
   for (const contact of contacts ?? []) {
-    if (!contact?.phone_number || !contact.verified) continue
+    if (!contact?.phone_number) continue
 
-    const destination = String(contact.phone_number).replace(/\D/g, '')
+    if (movementId) {
+      const { data: existingNotification } = await svc
+        .from('process_movement_notifications')
+        .select('id')
+        .eq('tenant_id', processo.user_id)
+        .eq('movement_id', movementId)
+        .eq('contact_id', contact.id)
+        .maybeSingle()
 
-    if (!contact.notifications_opt_in) {
-      const askOptIn = 'Você deseja receber atualizações automáticas deste processo por WhatsApp? Responda SIM para ativar.'
-      await enqueueMessage({
-        supabase: svc,
-        tenantId: processo.user_id,
-        destination,
-        event: 'process_update_optin',
-        reference: `optin:${event.id}:${contact.id}`,
-        aggregateType: 'processo',
-        aggregateId: processo.id,
-        payload: {
-          kind: 'process_update_optin',
-          destinationNumber: destination,
-          messageText: askOptIn,
-          instanceName: instance.instance_name,
-          instanceId: instance.id,
-          userId: processo.user_id,
-        },
-      })
-      await enqueueOutboundLog(svc, processo.user_id, destination, askOptIn, 'OPT_IN_REQUEST')
-      continue
+      if (existingNotification?.id) continue
     }
 
+    const destination = String(contact.phone_number).replace(/\D/g, '')
     const now = new Date()
     const lastSentAt = contact.last_notification_sent_at ? new Date(contact.last_notification_sent_at) : null
     const cooldownActive = lastSentAt
@@ -152,6 +143,22 @@ async function processMovementDetected(svc: ReturnType<typeof createClient>, eve
       .from('whatsapp_contacts')
       .update({ last_notification_sent_at: now.toISOString(), updated_at: now.toISOString() })
       .eq('id', contact.id)
+
+    if (movementId) {
+      const { error: trackingError } = await svc
+        .from('process_movement_notifications')
+        .insert({
+          tenant_id: processo.user_id,
+          process_id: processo.id,
+          movement_id: movementId,
+          contact_id: contact.id,
+          notified_at: now.toISOString(),
+        })
+
+      if (trackingError) {
+        throw new Error(`movement_notification_tracking_failed:${trackingError.message}`)
+      }
+    }
   }
 }
 

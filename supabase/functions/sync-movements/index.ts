@@ -141,17 +141,21 @@ serve(async (req) => {
             }));
 
           if (newMovs.length > 0) {
-            const { error: movError } = await supabase.from('movimentacoes').insert(newMovs);
+            const { data: insertedMovements, error: movError } = await supabase
+              .from('movimentacoes')
+              .insert(newMovs)
+              .select('id, descricao, judit_movement_id');
             if (movError) throw movError;
 
             // Emit domain event so process-domain-events worker dispatches WhatsApp to linked clients
-            for (const mov of newMovs) {
+            for (const mov of (insertedMovements ?? [])) {
               await supabase.from('domain_events').upsert({
                 tenant_id: mon.user_id,
                 event_type: 'PROCESS_MOVEMENT_DETECTED',
-                dedupe_key: `${processo.id}:${mov.judit_movement_id ?? mov.descricao?.slice(0, 40)}`,
+                dedupe_key: `${processo.id}:${mov.judit_movement_id ?? mov.id}`,
                 payload: {
                   processo_id: processo.id,
+                  movement_id: mov.id,
                   resumo: mov.descricao,
                   total_movimentacoes: newMovs.length,
                 },

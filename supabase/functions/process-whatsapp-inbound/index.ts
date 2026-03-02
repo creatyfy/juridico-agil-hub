@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { handleAuthenticationFlow, isPhoneVerified } from '../webhook-whatsapp/services/auth.ts'
+import { handleAuthenticationFlow, isPhoneVerified, tryActivateNotificationsOptIn } from '../webhook-whatsapp/services/auth.ts'
 import { handleIncomingMessage } from '../webhook-whatsapp/services/orchestrator.ts'
 import type { RequestContext } from '../webhook-whatsapp/services/types.ts'
 
@@ -84,6 +84,9 @@ async function processInboundEvent(svc: ReturnType<typeof createClient>, workerI
       await handleIncomingMessage({ ...ctx, clienteId: authResult.clienteId })
       return
     }
+
+    const optInEnabled = await tryActivateNotificationsOptIn(ctx)
+    if (optInEnabled) return
 
     if (!verified.clienteId) throw new Error('verified_without_cliente')
     await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
