@@ -12,7 +12,8 @@ const BATCH_SIZE = Number(Deno.env.get('CAMPAIGN_BATCH_SIZE') ?? '100')
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
-  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  // deno-lint-ignore no-explicit-any
+  const svc = createClient<any>(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const body = await req.json().catch(() => ({})) as { action?: string; campaign_job_id?: string }
 
   if (body.action === 'cancel' && body.campaign_job_id) {
