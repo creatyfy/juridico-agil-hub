@@ -23,6 +23,7 @@ import VincularWhatsApp from "./pages/vinculacao/VincularWhatsApp";
 import NotFound from "./pages/NotFound";
 import Planos from './pages/Planos';
 import Checkout from './pages/Checkout';
+import CheckoutSuccess from './pages/CheckoutSuccess';
 
 const queryClient = new QueryClient();
 
@@ -45,6 +46,7 @@ function AppRoutes() {
       <Route path="/vincular" element={<VincularWhatsApp />} />
       <Route path="/planos" element={<Planos />} />
       <Route path="/checkout" element={<Checkout />} />
+      <Route path="/checkout/sucesso" element={<CheckoutSuccess />} />
 
       {/* Protected app routes */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
