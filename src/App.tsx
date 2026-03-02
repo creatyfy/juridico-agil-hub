@@ -45,6 +45,7 @@ function AppRoutes() {
       <Route path="/convite/:token" element={<AceitarConvite />} />
       <Route path="/vincular" element={<VincularWhatsApp />} />
       <Route path="/planos" element={<Planos />} />
+      <Route path="/Checkout" element={<Navigate to="/checkout" replace />} />
       <Route path="/checkout" element={<Checkout />} />
       <Route path="/checkout/sucesso" element={<CheckoutSuccess />} />
 
