@@ -44,4 +44,12 @@ export async function enqueueWhatsAppText(
     status: result.status,
     idempotency_key: result.idempotencyKey,
   })
+
+  await ctx.supabase.from('conversation_logs').insert({
+    tenant_id: ctx.tenantId,
+    phone_number: ctx.phone,
+    message: text,
+    direction: 'outbound',
+    intent: kind,
+  })
 }

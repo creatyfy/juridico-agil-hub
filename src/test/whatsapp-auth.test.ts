@@ -67,7 +67,7 @@ describe('whatsapp auth flow hardening', () => {
     expect(result.authenticated).toBe(true)
     expect(verification.verified).toBe(true)
     expect(state.otp_validacoes).toHaveLength(0)
-    expect(state.conversas[0]?.estado).toBe('VERIFIED')
+    expect(state.whatsapp_contacts[0]?.conversation_state).toBe('AUTHENTICATED')
 
     // Cleanup: estado isolado por teste (novo state em cada case).
   })
@@ -109,7 +109,7 @@ describe('whatsapp auth flow hardening', () => {
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
     expect(state.otp_validacoes).toHaveLength(0)
-    expect(state.conversas[0]?.estado).toBe('AWAITING_CPF')
+    expect(state.whatsapp_contacts[0]?.conversation_state).toBe('WAITING_CPF')
   })
 
   it('4) OTP expirado reinicia fluxo com reset seguro', async () => {
@@ -125,13 +125,24 @@ describe('whatsapp auth flow hardening', () => {
     ctx = await makeCtx(state, '123456')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
 
-    expect(state.conversas[0]?.estado).toBe('AWAITING_CPF')
+    expect(state.whatsapp_contacts[0]?.conversation_state).toBe('WAITING_CPF')
     expect(state.otp_validacoes).toHaveLength(0)
   })
 
   it('5) bypass para telefone previamente verificado retorna acesso direto', async () => {
     const state = createDbState()
-    state.telefones.push({ tenant_id: 'tenant-1', cliente_id: 'cliente-1', numero: '5511999999999', verificado: true })
+    state.whatsapp_contacts.push({
+      id: 'contact-1',
+      tenant_id: 'tenant-1',
+      phone_number: '5511999999999',
+      client_id: 'cliente-1',
+      process_id: null,
+      verified: true,
+      conversation_state: 'AUTHENTICATED',
+      cpf_attempts: 0,
+      otp_attempts: 0,
+      blocked_until: null,
+    })
 
     const ctx = await makeCtx(state, 'status')
     const verification = await ctx.isPhoneVerified(ctx.baseCtx)
@@ -164,7 +175,7 @@ describe('whatsapp auth flow hardening', () => {
     expect(state.otp_validacoes).toHaveLength(1)
 
     // Nova solicitação ainda na janela deve ser bloqueada por limite PHONE + TENANT_CPF.
-    state.conversas[0].estado = 'AWAITING_CPF'
+    state.whatsapp_contacts[0].conversation_state = 'WAITING_CPF'
     ctx = await makeCtx(state, '12345678909')
     await ctx.handleAuthenticationFlow(ctx.baseCtx)
     expect(sentMessages.at(-1)?.text).toContain('limite de tentativas')

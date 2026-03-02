@@ -1,109 +1,125 @@
-import { classifyMessage, explainMovement } from './ai.ts'
+import { classifyIntent, explainMovement } from './ai.ts'
 import { enqueueWhatsAppText } from './outbox.ts'
 import { logError, logInfo } from './logger.ts'
 import type { RequestContext } from './types.ts'
 
-async function fetchHistorySummary(ctx: RequestContext, clienteId: string): Promise<string> {
-  const { data } = await ctx.supabase
-    .from('whatsapp_mensagens')
-    .select('conteudo, direcao, timestamp')
-    .eq('instancia_id', ctx.instanceId)
-    .eq('remote_jid', `${ctx.phone}@s.whatsapp.net`)
-    .order('timestamp', { ascending: false })
-    .limit(8)
-
-  const summary = (data ?? [])
-    .reverse()
-    .map((msg: any) => `${msg.direcao === 'in' ? 'cliente' : 'sistema'}: ${msg.conteudo}`)
-    .join(' | ')
-
-  return summary || `Cliente ${clienteId} sem histórico recente.`
+async function logConversation(ctx: RequestContext, direction: 'inbound' | 'outbound', message: string, intent?: string): Promise<void> {
+  await ctx.supabase.from('conversation_logs').insert({
+    tenant_id: ctx.tenantId,
+    phone_number: ctx.phone,
+    message,
+    direction,
+    intent: intent ?? null,
+  })
 }
 
-async function fetchLastMovement(ctx: RequestContext, clienteId: string): Promise<string | null> {
-  const { data } = await ctx.supabase
-    .from('cliente_processos')
-    .select('processo_id')
-    .eq('cliente_id', clienteId)
-    .limit(10)
-
-  const processIds = (data ?? []).map((item: any) => item.processo_id)
-  if (processIds.length === 0) return null
-
-  const { data: movement } = await ctx.supabase
-    .from('movimentacoes')
-    .select('descricao, data_movimentacao')
-    .in('processo_id', processIds)
-    .order('data_movimentacao', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  return movement?.descricao ?? null
-}
-
-async function registerEscalation(ctx: RequestContext, clienteId: string, reason: string, metadata: Record<string, unknown>) {
+async function registerEscalation(ctx: RequestContext, clienteId: string | null, reason: string, metadata: Record<string, unknown>) {
   await ctx.supabase.from('notificacoes').insert({
     user_id: ctx.tenantId,
     tipo: 'whatsapp_escalacao',
     titulo: `Escalação de atendimento (${reason})`,
-    mensagem: `Cliente ${clienteId} solicitou apoio humano.`,
+    mensagem: `Contato ${ctx.phone} solicitou apoio humano.`,
     link: '/atendimento',
-    metadata,
+    metadata: { cliente_id: clienteId, ...metadata },
   })
+}
+
+export async function getClientProcessByCPF(ctx: RequestContext, cpf: string): Promise<string> {
+  const { data: cliente } = await ctx.supabase
+    .from('clientes')
+    .select('id, nome')
+    .eq('tenant_id', ctx.tenantId)
+    .eq('cpf', cpf)
+    .maybeSingle()
+
+  if (!cliente) {
+    return 'Não encontramos processo ativo para os dados informados. Se preferir, posso encaminhar para atendimento humano.'
+  }
+
+  const { data: binding } = await ctx.supabase
+    .from('cliente_processos')
+    .select('processo_id')
+    .eq('cliente_id', cliente.id)
+    .eq('status', 'ativo')
+    .limit(1)
+    .maybeSingle()
+
+  if (!binding?.processo_id) {
+    return 'No momento não há processo ativo vinculado ao seu cadastro.'
+  }
+
+  const { data: movement } = await ctx.supabase
+    .from('movimentacoes')
+    .select('id, descricao, data_movimentacao')
+    .eq('processo_id', binding.processo_id)
+    .order('data_movimentacao', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  await ctx.supabase.from('process_consultation_audit_logs').insert({
+    tenant_id: ctx.tenantId,
+    phone_number: ctx.phone,
+    client_id: cliente.id,
+    process_id: binding.processo_id,
+    intent: 'PROCESS_STATUS',
+  })
+
+  if (!movement) {
+    return 'Seu processo está ativo, sem movimentação recente registrada até o momento.'
+  }
+
+  const summary = await explainMovement(movement.descricao ?? 'Nova movimentação processual detectada')
+  const movementDate = new Date(movement.data_movimentacao ?? new Date().toISOString()).toLocaleDateString('pt-BR')
+  return `Seu processo teve atualização em ${movementDate}. ${summary}`
 }
 
 export async function handleIncomingMessage(ctx: RequestContext & { clienteId: string }) {
   try {
-    const historySummary = await fetchHistorySummary(ctx, ctx.clienteId)
-    const classification = await classifyMessage(ctx.message, historySummary)
+    await logConversation(ctx, 'inbound', ctx.message)
 
-    const shouldEscalate = classification.precisaEscalar || classification.confianca < 0.75
+    const intent = await classifyIntent(ctx.message)
 
     logInfo('orchestrator_decision', {
       request_id: ctx.requestId,
       tenant_id: ctx.tenantId,
       telefone: ctx.phone,
-      intencao: classification.intencao,
-      confianca: classification.confianca,
-      precisaEscalar: shouldEscalate,
+      intent,
     })
 
-    if (classification.intencao === 'RECLAMACAO') {
-      await registerEscalation(ctx, ctx.clienteId, 'RECLAMACAO', { classification })
-      await enqueueWhatsAppText(ctx, 'Recebemos sua reclamação. Vamos encaminhar para um advogado responsável agora mesmo.', 'orchestrator', `reclamacao:${ctx.clienteId}:${ctx.message}`)
+    if (intent === 'HUMAN_SUPPORT') {
+      await ctx.supabase
+        .from('whatsapp_contacts')
+        .update({ conversation_state: 'HUMAN_REQUIRED', updated_at: new Date().toISOString() })
+        .eq('tenant_id', ctx.tenantId)
+        .eq('phone_number', ctx.phone)
+
+      await registerEscalation(ctx, ctx.clienteId, 'HUMAN_SUPPORT', { intent })
+      const text = 'Perfeito. Encaminhei sua conversa para atendimento humano e um responsável continuará por aqui.'
+      await enqueueWhatsAppText(ctx, text, 'orchestrator', `human_support:${ctx.clienteId}:${ctx.requestId}`)
       return
     }
 
-    if (classification.intencao === 'MARCAR_CONSULTORIA') {
-      await registerEscalation(ctx, ctx.clienteId, 'MARCAR_CONSULTORIA', { classification })
-      await enqueueWhatsAppText(ctx, 'Recebemos seu pedido de consultoria. Um atendente humano entrará em contato para agendamento.', 'orchestrator', `consultoria:${ctx.clienteId}:${ctx.message}`)
+    if (intent === 'PROCESS_STATUS') {
+      const { data: cliente } = await ctx.supabase
+        .from('clientes')
+        .select('cpf')
+        .eq('id', ctx.clienteId)
+        .maybeSingle()
+
+      const response = await getClientProcessByCPF(ctx, cliente?.cpf ?? '')
+      await enqueueWhatsAppText(ctx, response, 'orchestrator', `process_status:${ctx.clienteId}:${ctx.requestId}`)
       return
     }
 
-    if (classification.intencao === 'CONSULTAR_STATUS' && !shouldEscalate) {
-      const movement = await fetchLastMovement(ctx, ctx.clienteId)
-      if (!movement) {
-        await enqueueWhatsAppText(ctx, 'No momento não encontramos nova movimentação relevante no seu processo.', 'orchestrator', `status_sem_movimento:${ctx.clienteId}`)
-        return
-      }
-
-      const explanation = await explainMovement(movement)
-      await enqueueWhatsAppText(ctx, explanation, 'orchestrator', `status_explanation:${ctx.clienteId}:${movement}`)
+    if (intent === 'NEW_CLIENT') {
+      const text = 'Obrigado pelo contato. Vou registrar seu interesse e nossa equipe entrará em contato para o onboarding inicial.'
+      await registerEscalation(ctx, ctx.clienteId, 'NEW_CLIENT', { intent })
+      await enqueueWhatsAppText(ctx, text, 'orchestrator', `new_client:${ctx.requestId}`)
       return
     }
 
-    if (shouldEscalate || classification.intencao === 'FALAR_COM_ADVOGADO') {
-      await registerEscalation(ctx, ctx.clienteId, 'ESCALATION', { classification })
-      await enqueueWhatsAppText(ctx, 'Vou encaminhar sua mensagem para um advogado do time seguir com você.', 'orchestrator', `escalation:${ctx.clienteId}:${ctx.message}`)
-      return
-    }
-
-    await enqueueWhatsAppText(
-      ctx,
-      'Entendi sua mensagem. Posso ajudar com status do processo ou encaminhar para um advogado quando você preferir.',
-      'orchestrator',
-      `fallback_help:${ctx.clienteId}:${classification.intencao}`
-    )
+    const fallback = 'Entendi! Posso consultar andamento processual ou encaminhar você para atendimento humano quando preferir.'
+    await enqueueWhatsAppText(ctx, fallback, 'orchestrator', `fallback:${ctx.requestId}`)
   } catch (error) {
     logError('orchestrator_failed', {
       request_id: ctx.requestId,
@@ -112,13 +128,8 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
       error: String(error),
     })
 
-    await enqueueWhatsAppText(
-      ctx,
-      'Tivemos uma instabilidade na IA. Já encaminhamos para atendimento humano continuar com você.',
-      'orchestrator',
-      `ai_fallback:${ctx.clienteId}:${ctx.requestId}`
-    )
-
+    const fallback = 'Tivemos uma instabilidade no atendimento automático. Já encaminhamos para atendimento humano continuar com você.'
+    await enqueueWhatsAppText(ctx, fallback, 'orchestrator', `ai_fallback:${ctx.requestId}`)
     await registerEscalation(ctx, ctx.clienteId, 'AI_FALLBACK', { error: String(error) })
   }
 }

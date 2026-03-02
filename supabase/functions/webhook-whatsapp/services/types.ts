@@ -1,6 +1,6 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-export type ConversationState = 'UNVERIFIED' | 'AWAITING_CPF' | 'AWAITING_OTP' | 'VERIFIED'
+export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
 
 export type RequestContext = {
   requestId: string
@@ -12,16 +12,4 @@ export type RequestContext = {
   message: string
 }
 
-export type Intent =
-  | 'CONSULTAR_STATUS'
-  | 'MARCAR_CONSULTORIA'
-  | 'ENVIAR_DOCUMENTO'
-  | 'RECLAMACAO'
-  | 'FALAR_COM_ADVOGADO'
-  | 'DUVIDA_GERAL'
-
-export type ClassificationResult = {
-  intencao: Intent
-  confianca: number
-  precisaEscalar: boolean
-}
+export type Intent = 'PROCESS_STATUS' | 'HUMAN_SUPPORT' | 'NEW_CLIENT' | 'OTHER'
