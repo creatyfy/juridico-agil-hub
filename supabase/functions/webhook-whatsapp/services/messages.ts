@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 export const OTP_TTL_MINUTES = Number(Deno.env.get('OTP_TTL_MINUTES') ?? '5')
 export const OTP_MAX_ATTEMPTS = Number(Deno.env.get('OTP_MAX_ATTEMPTS') ?? '3')
 

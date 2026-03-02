@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { buildIdempotencyKey, type OutboxPayload } from './outbox.ts'
 

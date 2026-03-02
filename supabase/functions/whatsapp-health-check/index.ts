@@ -1,4 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// deno-lint-ignore no-explicit-any
+type AnySupabase = SupabaseClient<any, any, any>
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,7 +25,7 @@ function mapStateToStatus(state: string): 'connected' | 'connecting' | 'disconne
   return 'disconnected'
 }
 
-async function evaluateTenantCircuits(svc: ReturnType<typeof createClient>, correlationId: string) {
+async function evaluateTenantCircuits(svc: AnySupabase, correlationId: string) {
   const { data: metricsRows, error: metricsError } = await svc
     .from('v_whatsapp_operational_metrics')
     .select('tenant_id,success_rate_percent,retry_rate_percent,dead_letter_rate_percent,avg_backlog_age_seconds')
@@ -87,7 +90,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
   const correlationId = req.headers.get('x-correlation-id') || req.headers.get('x-request-id') || crypto.randomUUID()
-  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const svc: AnySupabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
   const { data: instances, error: instanceError } = await svc
     .from('whatsapp_instancias')

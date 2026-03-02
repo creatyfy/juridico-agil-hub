@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'WAITING_PROCESS_SELECTION' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
