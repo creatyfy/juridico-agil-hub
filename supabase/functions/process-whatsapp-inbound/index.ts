@@ -1,4 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// deno-lint-ignore no-explicit-any
+type AnySupabase = SupabaseClient<any, any, any>
 import { handleAuthenticationFlow, isPhoneVerified, tryActivateNotificationsOptIn } from '../webhook-whatsapp/services/auth.ts'
 import { handleIncomingMessage } from '../webhook-whatsapp/services/orchestrator.ts'
 import type { RequestContext } from '../webhook-whatsapp/services/types.ts'
@@ -27,7 +30,7 @@ function extractMessageText(msg: any): string | null {
     || null
 }
 
-async function processInboundEvent(svc: ReturnType<typeof createClient>, workerId: string, event: any): Promise<void> {
+async function processInboundEvent(svc: AnySupabase, workerId: string, event: any): Promise<void> {
   const payload = event.payload ?? {}
   const inboundMessageId = payload.inbound_message_id as string | undefined
   const tenantId = event.tenant_id as string
@@ -103,7 +106,7 @@ async function processInboundEvent(svc: ReturnType<typeof createClient>, workerI
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
-  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const svc: AnySupabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const workerId = `${Deno.env.get('DENO_DEPLOYMENT_ID') ?? 'local'}:${req.headers.get('x-request-id') ?? crypto.randomUUID()}`
 
   const { data: events, error: claimError } = await svc.rpc('claim_domain_events', {

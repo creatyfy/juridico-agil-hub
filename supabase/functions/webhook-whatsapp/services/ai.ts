@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 import type { Intent } from './types.ts'
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')

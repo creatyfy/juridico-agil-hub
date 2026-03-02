@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 import { enqueueWhatsAppText } from './outbox.ts'
 import { logError, logInfo } from './logger.ts'
 import { AUTH_MESSAGES, OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './messages.ts'

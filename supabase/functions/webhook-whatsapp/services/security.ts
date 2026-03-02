@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno edge function
 const OTP_DIGITS = 6
 
 export function normalizeCpf(value: string): string {

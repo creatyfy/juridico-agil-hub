@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// deno-lint-ignore no-explicit-any
+type AnySupabase = SupabaseClient<any, any, any>;
 
 import { juditRequest } from "../_shared/judit-client.ts";
 import { logTenantAction } from "../_shared/audit-log.ts";
@@ -40,7 +43,7 @@ function summarizeMovement(step: JuditStep): string {
 }
 
 async function collectCompletedRequest(params: {
-  supabase: ReturnType<typeof createClient>
+  supabase: AnySupabase
   mon: MonitoramentoRow
   processo: { id: string; numero_cnj?: string | null }
   requestId: string
@@ -141,7 +144,7 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase: AnySupabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json().catch(() => ({}));
     const { processo_id } = body;
