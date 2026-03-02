@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { PricingSection } from '@/components/pricing/PricingSection';
 import { Shield, Zap, MessageSquare, ArrowRight, CheckCircle2, Scale, Users, Bot, ChevronRight, FileText, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import logo from '@/assets/logo-jarvis-jud.png';
@@ -225,7 +226,7 @@ export default function LandingPage() {
       </section>
 
       {/* CTA */}
-      <section id="planos" className="hero-section py-20 md:py-28 relative overflow-hidden">
+      <section className="hero-section py-20 md:py-28 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.05]" style={{
           backgroundImage: 'radial-gradient(circle at 1px 1px, hsl(var(--primary-foreground)) 1px, transparent 0)',
           backgroundSize: '40px 40px'
@@ -248,6 +249,23 @@ export default function LandingPage() {
               <Button size="lg" variant="outline" className="text-base px-8 h-13 border-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/10">
                 Já tenho conta
               </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section id="planos" className="py-20 md:py-24 bg-[#EEF2F7]">
+        <div className="container mx-auto px-4 md:px-8">
+          <div className="text-center">
+            <h2 className="text-3xl md:text-4xl font-bold">Escolha o plano ideal para você</h2>
+            <p className="mt-3 text-muted-foreground text-lg">Soluções para escritórios de todos os tamanhos</p>
+          </div>
+
+          <PricingSection />
+
+          <div className="text-center mt-2">
+            <Link to="/planos" className="text-sm font-semibold text-[#2563EB] hover:underline">
+              Ver detalhes completos →
             </Link>
           </div>
         </div>
