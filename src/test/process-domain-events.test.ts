@@ -5,6 +5,7 @@ const enqueued: Array<{ reference: string; payload: any }> = []
 vi.mock('../../supabase/functions/_shared/message-outbox-enqueue.ts', () => ({
   enqueueMessage: vi.fn(async (args: any) => {
     enqueued.push({ reference: args.reference, payload: args.payload })
+    return { ok: true, status: 'queued', idempotencyKey: 'test-key', outboxId: 'outbox-1' }
   }),
 }))
 

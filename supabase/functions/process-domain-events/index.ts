@@ -117,7 +117,7 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
 
     const messageText = `${groupedPrefix}${summary}`
 
-    await enqueueMessage({
+    const enqueue = await enqueueMessage({
       supabase: svc,
       tenantId: processo.user_id,
       destination,
@@ -136,6 +136,10 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
         userId: processo.user_id,
       },
     })
+
+    if (!enqueue.ok) {
+      throw new Error(`enqueue_failed:${enqueue.status}:${enqueue.reason ?? 'unknown'}`)
+    }
 
     await enqueueOutboundLog(svc, processo.user_id, destination, messageText, 'PROCESS_STATUS')
 
