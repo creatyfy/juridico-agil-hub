@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
         }),
       })
       const evoData = await evoRes.json()
-      console.log('Set webhook response:', JSON.stringify(evoData))
+      console.log('Set webhook response received')
       return new Response(JSON.stringify({ success: true, data: evoData }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })

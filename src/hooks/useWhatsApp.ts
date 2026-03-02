@@ -127,8 +127,7 @@ export function useWhatsApp() {
     if (syncedRef.current) return;
     setSyncing(true);
     try {
-      const res = await callEvolution('full-sync', undefined, {});
-      console.log('Full sync result:', res);
+      await callEvolution('full-sync', undefined, {});
       syncedRef.current = true;
     } catch (e) {
       console.error('Full sync error:', e);
