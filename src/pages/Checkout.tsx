@@ -9,6 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { enterprisePricing, PLAN_CATALOG } from '@/lib/pricing';
 import { parseCheckoutSearchParams } from '@/lib/checkout';
+import { useAuth } from '@/contexts/AuthContext';
 
 type PaymentMethod = 'credit_card' | 'pix' | 'boleto';
 type CheckoutForm = {
@@ -139,6 +140,7 @@ export default function Checkout() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { loading: authLoading } = useAuth();
 
   const [form, setForm] = useState<CheckoutForm>(initialForm);
   const [touched, setTouched] = useState<Partial<Record<keyof CheckoutForm, boolean>>>({});
@@ -150,6 +152,7 @@ export default function Checkout() {
   const plan = PLAN_CATALOG.find((item) => item.slug === planSlug);
 
   useEffect(() => {
+    if (authLoading) return;
     if (!planSlug && !billingCycle) return;
 
     const isInvalidCycle = !billingCycle;
@@ -161,7 +164,7 @@ export default function Checkout() {
     if (isInvalidCycle || isInvalidPlan || isInvalidEnterpriseProcess) {
       navigate('/planos', { replace: true });
     }
-  }, [billingCycle, planSlug, navigate, plan, processesCount]);
+  }, [authLoading, billingCycle, planSlug, navigate, plan, processesCount]);
 
   const monthlyPrice = useMemo(() => {
     if (!plan || !billingCycle) return 0;

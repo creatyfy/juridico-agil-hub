@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom';
+import { Link, Outlet } from 'react-router-dom';
 import AppSidebar from './AppSidebar';
 import { useAuth } from '@/contexts/AuthContext';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -20,6 +20,9 @@ export default function AppLayout() {
             </h2>
           </div>
           <div className="flex items-center gap-4">
+            <Link to="/planos" className="text-sm font-medium text-primary hover:underline">
+              Planos
+            </Link>
             <NotificationCenter />
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">

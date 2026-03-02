@@ -44,7 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set up auth state listener FIRST
+    let initialCheckDone = false;
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session: Session | null) => {
         if (session?.user) {
@@ -52,16 +53,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           setUser(null);
         }
-        setLoading(false);
+        if (!initialCheckDone) {
+          initialCheckDone = true;
+          setLoading(false);
+        }
       }
     );
 
-    // Then check existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(mapSupabaseUser(session.user));
       }
-      setLoading(false);
+      if (!initialCheckDone) {
+        initialCheckDone = true;
+        setLoading(false);
+      }
     });
 
     return () => subscription.unsubscribe();
