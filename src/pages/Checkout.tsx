@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { BillingCycle, enterprisePricing, PLAN_CATALOG } from '@/lib/pricing';
+import { enterprisePricing, PLAN_CATALOG } from '@/lib/pricing';
+import { parseCheckoutSearchParams } from '@/lib/checkout';
 
 type PaymentMethod = 'credit_card' | 'pix' | 'boleto';
 type CheckoutForm = {
@@ -145,25 +146,20 @@ export default function Checkout() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingAddress, setIsLoadingAddress] = useState(false);
 
-  const planSlug = searchParams.get('plan');
-  const cycleParam = searchParams.get('cycle');
-  const processesParam = searchParams.get('processes');
-
-  const billingCycle = cycleParam === 'monthly' || cycleParam === 'annual' ? cycleParam : null;
+  const { planSlug, billingCycle, processesCount, hasProcessesParam } = parseCheckoutSearchParams(searchParams);
   const plan = PLAN_CATALOG.find((item) => item.slug === planSlug);
-  const processesCount = processesParam ? Number(processesParam) : null;
 
   useEffect(() => {
     const isInvalidCycle = !billingCycle;
     const isInvalidPlan = !plan;
     const isInvalidEnterpriseProcess = plan?.isEnterprise
       ? !processesCount || !processOptions.includes(processesCount)
-      : Boolean(processesParam);
+      : hasProcessesParam;
 
     if (isInvalidCycle || isInvalidPlan || isInvalidEnterpriseProcess) {
       navigate('/planos', { replace: true });
     }
-  }, [billingCycle, navigate, plan, processesCount, processesParam]);
+  }, [billingCycle, hasProcessesParam, navigate, plan, processesCount]);
 
   const monthlyPrice = useMemo(() => {
     if (!plan || !billingCycle) return 0;

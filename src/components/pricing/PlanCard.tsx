@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { BillingCycle, PlanFeature } from '@/lib/pricing';
+import { buildCheckoutUrl } from '@/lib/checkout';
 import { FeatureItem } from './FeatureItem';
 
 interface PlanCardProps {
@@ -36,7 +37,7 @@ export function PlanCard({ name, slug, price, activationFee, features, cycle, hi
       </ul>
 
       <Link
-        to={`/checkout?plan=${slug}&cycle=${cycle}`}
+        to={buildCheckoutUrl({ plan: slug, cycle })}
         className="mt-6 inline-flex h-11 items-center justify-center rounded-lg bg-[#2563EB] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90"
       >
         Assinar

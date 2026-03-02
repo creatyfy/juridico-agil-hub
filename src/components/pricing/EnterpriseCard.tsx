@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PlanFeature, BillingCycle, enterprisePricing } from '@/lib/pricing';
+import { buildCheckoutUrl } from '@/lib/checkout';
 import { FeatureItem } from './FeatureItem';
 import {
   Select,
@@ -63,7 +64,7 @@ export function EnterpriseCard({ features, cycle }: EnterpriseCardProps) {
       </ul>
 
       <Link
-        to={`/checkout?plan=enterprise&cycle=${cycle}&processes=${selectedProcesses}`}
+        to={buildCheckoutUrl({ plan: 'enterprise', cycle, processes: selectedProcesses })}
         className="mt-6 inline-flex h-11 items-center justify-center rounded-lg bg-[#2563EB] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90"
       >
         Assinar
