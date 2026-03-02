@@ -96,6 +96,7 @@ Deno.serve(async (req) => {
       })
 
       if (decision.action === 'retry') {
+        const nextAttempts = Number(row.attempts ?? 0)
         const ok = await svc.rpc('reschedule_outbox_retry', {
           p_id: row.id,
           p_worker_id: workerId,
@@ -103,18 +104,37 @@ Deno.serve(async (req) => {
           p_next_retry_at: new Date(Date.now() + decision.delayMs).toISOString(),
           p_error: decision.reason,
         })
+        if (ok.data) {
+          await svc.rpc('update_process_movement_notification_status', {
+            p_tenant_id: row.tenant_id,
+            p_outbox_id: row.id,
+            p_status: 'failed',
+            p_attempts: nextAttempts,
+            p_last_error: decision.reason,
+          })
+        }
         if (ok.data && row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id).eq('status', 'queued') }
         processed.push({ id: row.id, status: ok.data ? 'retry' : 'lease_lost_retry' })
         continue
       }
 
       if (decision.action === 'dead_letter') {
+        const nextAttempts = Number(row.attempts ?? 0)
         const ok = await svc.rpc('move_outbox_dead_letter', {
           p_id: row.id,
           p_worker_id: workerId,
           p_lease_version: row.lease_version,
           p_error: decision.reason,
         })
+        if (ok.data) {
+          await svc.rpc('update_process_movement_notification_status', {
+            p_tenant_id: row.tenant_id,
+            p_outbox_id: row.id,
+            p_status: 'dead_letter',
+            p_attempts: nextAttempts,
+            p_last_error: decision.reason,
+          })
+        }
         if (ok.data && row.campaign_job_id) { await svc.from('campaign_recipients').update({ status: 'failed', last_error: decision.reason }).eq('outbox_id', row.id).eq('status', 'queued') }
         processed.push({ id: row.id, status: ok.data ? 'dead_letter' : 'lease_lost_dead_letter' })
         continue
@@ -132,6 +152,14 @@ Deno.serve(async (req) => {
       })
 
       if (accepted.data) {
+        await svc.rpc('update_process_movement_notification_status', {
+          p_tenant_id: row.tenant_id,
+          p_outbox_id: row.id,
+          p_status: 'sent',
+          p_attempts: Number(row.attempts ?? 0),
+          p_last_error: null,
+        })
+
         await svc.from('whatsapp_mensagens').insert({
           instancia_id: payload.instanceId,
           remote_jid: remoteJid,
@@ -170,23 +198,42 @@ Deno.serve(async (req) => {
       })
 
       if (decision.action === 'retry') {
-        await svc.rpc('reschedule_outbox_retry', {
+        const retryOk = await svc.rpc('reschedule_outbox_retry', {
           p_id: row.id,
           p_worker_id: workerId,
           p_next_retry_at: new Date(Date.now() + computeBackoffWithJitterMs(Number(row.attempts ?? 1))).toISOString(),
           p_lease_version: row.lease_version,
           p_error: decision.reason,
         })
+        if (retryOk.data) {
+          await svc.rpc('update_process_movement_notification_status', {
+            p_tenant_id: row.tenant_id,
+            p_outbox_id: row.id,
+            p_status: 'failed',
+            p_attempts: Number(row.attempts ?? 0),
+            p_last_error: decision.reason,
+          })
+        }
         processed.push({ id: row.id, status: 'retry_exception' })
         continue
       }
 
-      await svc.rpc('move_outbox_dead_letter', {
+      const deadLetterReason = 'reason' in decision ? decision.reason : 'unknown'
+      const deadLetterOk = await svc.rpc('move_outbox_dead_letter', {
         p_id: row.id,
         p_worker_id: workerId,
         p_lease_version: row.lease_version,
-        p_error: 'reason' in decision ? decision.reason : 'unknown',
+        p_error: deadLetterReason,
       })
+      if (deadLetterOk.data) {
+        await svc.rpc('update_process_movement_notification_status', {
+          p_tenant_id: row.tenant_id,
+          p_outbox_id: row.id,
+          p_status: 'dead_letter',
+          p_attempts: Number(row.attempts ?? 0),
+          p_last_error: deadLetterReason,
+        })
+      }
       processed.push({ id: row.id, status: 'dead_letter_exception' })
     }
   }

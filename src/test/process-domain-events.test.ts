@@ -40,6 +40,20 @@ class TestSupabase {
         for (const r of arr) tables[table].push({ id: crypto.randomUUID(), ...r })
         return Promise.resolve({ data: arr, error: null })
       },
+      upsert: (payload: any, options?: { onConflict?: string; ignoreDuplicates?: boolean }) => {
+        if (!tables[table]) tables[table] = []
+        const arr = Array.isArray(payload) ? payload : [payload]
+        const conflictCols = (options?.onConflict ?? '').split(',').map((x) => x.trim()).filter(Boolean)
+        for (const item of arr) {
+          const existing = tables[table].find((row) => conflictCols.length > 0 && conflictCols.every((col) => row[col] === item[col]))
+          if (existing) {
+            if (!options?.ignoreDuplicates) Object.assign(existing, item)
+            continue
+          }
+          tables[table].push({ id: crypto.randomUUID(), ...item })
+        }
+        return Promise.resolve({ data: arr, error: null })
+      },
       update: (payload: any) => {
         updatePayload = payload
         return api

@@ -151,12 +151,20 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
     if (movementId) {
       const { error: trackingError } = await svc
         .from('process_movement_notifications')
-        .insert({
+        .upsert({
           tenant_id: processo.user_id,
           process_id: processo.id,
           movement_id: movementId,
           contact_id: contact.id,
+          outbox_id: enqueue.outboxId ?? null,
+          status: 'queued',
+          attempts: 0,
+          last_error: null,
           notified_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        }, {
+          onConflict: 'tenant_id,movement_id,contact_id',
+          ignoreDuplicates: true,
         })
 
       if (trackingError) {
