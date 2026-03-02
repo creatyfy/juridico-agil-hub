@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { enqueueMessage } from '../_shared/message-outbox-enqueue.ts'
+import { buildIdempotencyKey } from '../_shared/outbox.ts'
 import { explainMovement } from '../webhook-whatsapp/services/ai.ts'
 
 const corsHeaders = {
@@ -11,6 +11,12 @@ const BATCH_SIZE = Number(Deno.env.get('DOMAIN_EVENTS_BATCH_SIZE') ?? '30')
 const LEASE_SECONDS = Number(Deno.env.get('DOMAIN_EVENTS_LEASE_SECONDS') ?? '45')
 const MAX_ATTEMPTS = Number(Deno.env.get('DOMAIN_EVENTS_MAX_ATTEMPTS') ?? '6')
 const DAILY_NOTIFICATION_COOLDOWN_HOURS = Number(Deno.env.get('WHATSAPP_DAILY_NOTIFICATION_COOLDOWN_HOURS') ?? '8')
+const OUTBOX_BACKLOG_LIMIT_PER_TENANT = Number(Deno.env.get('OUTBOX_BACKLOG_LIMIT_PER_TENANT') ?? '500')
+const OUTBOX_BACKLOG_BLOCK_ENQUEUE = String(Deno.env.get('OUTBOX_BACKLOG_BLOCK_ENQUEUE') ?? 'true').toLowerCase() === 'true'
+
+function normalizeDestination(destination: string): string {
+  return destination.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/\D/g, '')
+}
 
 function backoffMs(attempts: number): number {
   return Math.min(120_000, 1500 * 2 ** Math.max(attempts - 1, 0))
@@ -48,6 +54,7 @@ export async function processMovementDetected(svc: any, event: any): Promise<voi
   const movementId = payload.movement_id as string | undefined
 
   if (!processoId) throw new Error('missing_processo_id')
+  if (!movementId) throw new Error('missing_movement_id')
 
   const { data: processo } = await svc
     .from('processos')
@@ -102,7 +109,7 @@ export async function processMovementDetected(svc: any, event: any): Promise<voi
       if (existingNotification?.id) continue
     }
 
-    const destination = String(contact.phone_number).replace(/\D/g, '')
+    const destination = normalizeDestination(String(contact.phone_number))
     const now = new Date()
     const lastSentAt = contact.last_notification_sent_at ? new Date(contact.last_notification_sent_at) : null
     const cooldownActive = lastSentAt
@@ -119,49 +126,85 @@ export async function processMovementDetected(svc: any, event: any): Promise<voi
 
     const messageText = `${groupedPrefix}${summary}`
 
-    const enqueue = await enqueueMessage({
-      supabase: svc,
-      tenantId: processo.user_id,
-      destination,
-      event: 'process_update',
-      reference: `movement:${event.id}:${contact.id}`,
-      aggregateType: 'processo',
-      aggregateId: processo.id,
-      payload: {
-        kind: 'process_update',
-        processoId: processo.id,
-        processoNumero: processo.numero_cnj,
-        destinationNumber: destination,
-        messageText,
-        instanceName: instance.instance_name,
-        instanceId: instance.id,
-        userId: processo.user_id,
-      },
+    const { data: connectedInstance } = await svc
+      .from('whatsapp_instancias')
+      .select('id, instance_name, status')
+      .eq('id', instance.id)
+      .eq('user_id', processo.user_id)
+      .maybeSingle()
+
+    if (!connectedInstance || connectedInstance.status !== 'connected') {
+      throw new Error('enqueue_failed:instance_disconnected:instance_not_connected')
+    }
+
+    const { count: backlogCount, error: backlogCountError } = await svc
+      .from('message_outbox')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', processo.user_id)
+      .in('status', ['pending', 'retry', 'sending', 'accepted'])
+
+    if (backlogCountError) {
+      throw new Error(`enqueue_failed:error:${backlogCountError.message}`)
+    }
+
+    if ((backlogCount ?? 0) > OUTBOX_BACKLOG_LIMIT_PER_TENANT && OUTBOX_BACKLOG_BLOCK_ENQUEUE) {
+      throw new Error('enqueue_failed:rate_limited:tenant_backlog_limit_exceeded')
+    }
+
+    const { data: allowedToken, error: tokenError } = await svc.rpc('consume_token', {
+      p_tenant_id: processo.user_id,
+      p_instance_id: connectedInstance.id,
+      p_amount: 1,
     })
 
-    if (!enqueue.ok) {
-      throw new Error(`enqueue_failed:${enqueue.status}:${enqueue.reason ?? 'unknown'}`)
+    if (tokenError) {
+      throw new Error(`enqueue_failed:error:${tokenError.message}`)
     }
 
-    let resolvedOutboxId = enqueue.outboxId ?? null
-
-    if (enqueue.status === 'duplicate' && !resolvedOutboxId) {
-      const { data: existingOutbox, error: existingOutboxError } = await svc
-        .from('message_outbox')
-        .select('id')
-        .eq('tenant_id', processo.user_id)
-        .eq('idempotency_key', enqueue.idempotencyKey)
-        .maybeSingle()
-
-      if (existingOutboxError) {
-        throw new Error(`enqueue_duplicate_outbox_lookup_failed:${existingOutboxError.message}`)
-      }
-
-      resolvedOutboxId = existingOutbox?.id ?? null
+    if (!allowedToken) {
+      throw new Error('enqueue_failed:rate_limited:tenant_instance_token_bucket_exhausted')
     }
+
+    const payload = {
+      kind: 'process_update',
+      processoId: processo.id,
+      processoNumero: processo.numero_cnj,
+      destinationNumber: destination,
+      messageText,
+      instanceName: connectedInstance.instance_name,
+      instanceId: connectedInstance.id,
+      userId: processo.user_id,
+    }
+
+    const idempotencyKey = await buildIdempotencyKey({
+      tenantId: processo.user_id,
+      event: 'process_update',
+      destination,
+      reference: `movement:${event.id}:${contact.id}`,
+    })
+
+    const { data: enqueueRows, error: enqueueError } = await svc.rpc('enqueue_process_movement_notification', {
+      p_tenant_id: processo.user_id,
+      p_process_id: processo.id,
+      p_movement_id: movementId,
+      p_contact_id: contact.id,
+      p_notified_at: now.toISOString(),
+      p_aggregate_type: 'processo',
+      p_aggregate_id: processo.id,
+      p_idempotency_key: idempotencyKey,
+      p_payload: payload,
+      p_campaign_job_id: null,
+    })
+
+    if (enqueueError) {
+      throw new Error(`enqueue_failed:error:${enqueueError.message}`)
+    }
+
+    const enqueueResult = Array.isArray(enqueueRows) ? enqueueRows[0] : enqueueRows
+    const resolvedOutboxId = enqueueResult?.outbox_id ?? null
 
     if (!resolvedOutboxId) {
-      throw new Error(`enqueue_outbox_id_missing:${enqueue.status}`)
+      throw new Error('enqueue_outbox_id_missing')
     }
 
     await enqueueOutboundLog(svc, processo.user_id, destination, messageText, 'PROCESS_STATUS')
@@ -171,29 +214,6 @@ export async function processMovementDetected(svc: any, event: any): Promise<voi
       .update({ last_notification_sent_at: now.toISOString(), updated_at: now.toISOString() })
       .eq('id', contact.id)
 
-    if (movementId) {
-      const { error: trackingError } = await svc
-        .from('process_movement_notifications')
-        .upsert({
-          tenant_id: processo.user_id,
-          process_id: processo.id,
-          movement_id: movementId,
-          contact_id: contact.id,
-          outbox_id: resolvedOutboxId,
-          status: 'queued',
-          attempts: 0,
-          last_error: null,
-          notified_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        }, {
-          onConflict: 'tenant_id,movement_id,contact_id',
-          ignoreDuplicates: true,
-        })
-
-      if (trackingError) {
-        throw new Error(`movement_notification_tracking_failed:${trackingError.message}`)
-      }
-    }
   }
 }
 
