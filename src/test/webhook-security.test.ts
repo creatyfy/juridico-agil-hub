@@ -21,6 +21,9 @@ describe('webhook security hardening', () => {
       whatsapp_contacts: [],
       conversas: [],
       clientes: [],
+      cliente_processos: [],
+      processos: [],
+      process_movement_notifications: [],
       otp_validacoes: [],
       telefones: [],
       whatsapp_auth_rate_limits: [],
@@ -86,7 +89,7 @@ describe('webhook security hardening', () => {
     const result = await validateWebhookSignature({
       req,
       rawBody,
-      supabase: new FakeSupabase({ whatsapp_contacts: [], conversas: [], clientes: [], otp_validacoes: [], telefones: [], whatsapp_auth_rate_limits: [], webhook_replay_guard: [] }) as any,
+      supabase: new FakeSupabase({ whatsapp_contacts: [], conversas: [], clientes: [], cliente_processos: [], processos: [], process_movement_notifications: [], otp_validacoes: [], telefones: [], whatsapp_auth_rate_limits: [], webhook_replay_guard: [] }) as any,
       instanceName: 'inst-1',
     })
 
