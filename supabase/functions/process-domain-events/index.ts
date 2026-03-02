@@ -22,8 +22,9 @@ function sameDay(dateA: Date, dateB: Date): boolean {
     && dateA.getUTCDate() === dateB.getUTCDate()
 }
 
+// deno-lint-ignore no-explicit-any
 async function enqueueOutboundLog(
-  svc: ReturnType<typeof createClient>,
+  svc: any,
   tenantId: string,
   phoneNumber: string,
   message: string,
@@ -38,7 +39,8 @@ async function enqueueOutboundLog(
   })
 }
 
-export async function processMovementDetected(svc: ReturnType<typeof createClient>, event: any): Promise<void> {
+// deno-lint-ignore no-explicit-any
+export async function processMovementDetected(svc: any, event: any): Promise<void> {
   const payload = event.payload ?? {}
   const processoId = payload.processo_id as string | undefined
   const resumo = (payload.resumo as string | undefined) ?? 'Nova movimentação processual detectada.'
@@ -198,7 +200,8 @@ export async function processMovementDetected(svc: ReturnType<typeof createClien
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
-  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  // deno-lint-ignore no-explicit-any
+  const svc = createClient<any>(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const workerId = `${Deno.env.get('DENO_DEPLOYMENT_ID') ?? 'local'}:${req.headers.get('x-request-id') ?? crypto.randomUUID()}`
 
   const { data: events, error: claimError } = await svc.rpc('claim_domain_events', {
