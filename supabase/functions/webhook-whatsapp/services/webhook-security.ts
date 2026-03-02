@@ -34,9 +34,19 @@ export async function validateWebhookSignature(input: WebhookValidationInput): P
   const secret = Deno.env.get('WEBHOOK_HMAC_SECRET')
   if (!secret) return { valid: false, reason: 'webhook_secret_not_configured' }
 
-  const timestamp = parseTimestamp(input.req.headers.get('x-webhook-timestamp'))
+  const timestampHeader = input.req.headers.get('x-webhook-timestamp')
   const nonce = input.req.headers.get('x-webhook-nonce')
   const incomingSignature = input.req.headers.get('x-webhook-signature')
+
+  if (!timestampHeader && !nonce && !incomingSignature) {
+    console.warn('[webhook-security] hmac headers not present; skipping signature validation for compatibility', {
+      instance_name: input.instanceName,
+      reason: 'hmac_skipped_no_headers',
+    })
+    return { valid: true, reason: 'hmac_skipped_no_headers' }
+  }
+
+  const timestamp = parseTimestamp(timestampHeader)
 
   if (!timestamp || !nonce || !incomingSignature) {
     return { valid: false, reason: 'missing_hmac_headers' }

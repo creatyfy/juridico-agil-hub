@@ -49,6 +49,10 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, correlation_id: correlationId, error: 'unauthorized_webhook' }, 401)
     }
 
+    if (webhookValidation.reason === 'hmac_skipped_no_headers') {
+      logInfo('webhook_hmac_not_present', { instanceName, correlationId })
+    }
+
     const { data: instance } = await supabase
       .from('whatsapp_instancias')
       .select('id, user_id, instance_name')
