@@ -23,19 +23,31 @@ function shouldRetry(status?: number) {
 }
 
 async function allowCircuit(tenantId: string): Promise<boolean> {
-  const svc = getAdminClient()
-  const { data, error } = await svc.rpc('judit_circuit_allow', { p_tenant_id: tenantId })
-  if (error) throw new Error(`judit_circuit_allow_failed: ${error.message}`)
-  return Boolean(data)
+  try {
+    const svc = getAdminClient()
+    const { data, error } = await svc.rpc('judit_circuit_allow', { p_tenant_id: tenantId })
+    if (error) {
+      // Circuit breaker functions not yet created – allow by default
+      console.warn(`judit_circuit_allow not available, allowing: ${error.message}`)
+      return true
+    }
+    return Boolean(data)
+  } catch {
+    return true
+  }
 }
 
 async function recordCircuit(tenantId: string, success: boolean, statusCode?: number) {
-  const svc = getAdminClient()
-  await svc.rpc('judit_circuit_record', {
-    p_tenant_id: tenantId,
-    p_success: success,
-    p_status_code: statusCode ?? null,
-  })
+  try {
+    const svc = getAdminClient()
+    await svc.rpc('judit_circuit_record', {
+      p_tenant_id: tenantId,
+      p_success: success,
+      p_status_code: statusCode ?? null,
+    })
+  } catch {
+    // Circuit breaker recording not available – ignore silently
+  }
 }
 
 export async function juditRequest(input: {
