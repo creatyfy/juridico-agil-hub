@@ -150,7 +150,7 @@ async function requestOtpForCustomer(ctx: RequestContext, contact: ContactRecord
 
   await enqueueWhatsAppText(ctx, `${AUTH_MESSAGES.OTP_SENT} Código: ${otp}`, 'auth', `otp_sent:${contact.id}:${expiresAt}`)
 
-  logInfo('otp_issued', { request_id: ctx.requestId, tenant_id: ctx.tenantId, telefone: ctx.phone, cpf, whatsapp_contact_id: contact.id })
+  logInfo('otp_issued', { request_id: ctx.requestId, tenant_id: ctx.tenantId, telefone: ctx.phone, whatsapp_contact_id: contact.id })
 }
 
 async function resetOtpFlow(ctx: RequestContext, contactId: string, otpId?: string): Promise<void> {
