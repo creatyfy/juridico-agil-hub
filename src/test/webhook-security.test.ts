@@ -18,6 +18,7 @@ describe('webhook security hardening', () => {
 
   it('8) rejeita webhook sem headers obrigatórios, assinatura inválida e replay por nonce', async () => {
     const stateSupabase = new FakeSupabase({
+      whatsapp_contacts: [],
       conversas: [],
       clientes: [],
       otp_validacoes: [],
@@ -85,7 +86,7 @@ describe('webhook security hardening', () => {
     const result = await validateWebhookSignature({
       req,
       rawBody,
-      supabase: new FakeSupabase({ conversas: [], clientes: [], otp_validacoes: [], telefones: [], whatsapp_auth_rate_limits: [], webhook_replay_guard: [] }) as any,
+      supabase: new FakeSupabase({ whatsapp_contacts: [], conversas: [], clientes: [], otp_validacoes: [], telefones: [], whatsapp_auth_rate_limits: [], webhook_replay_guard: [] }) as any,
       instanceName: 'inst-1',
     })
 

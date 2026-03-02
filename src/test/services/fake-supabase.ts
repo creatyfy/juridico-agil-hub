@@ -1,12 +1,27 @@
-export type ConversationState = 'UNVERIFIED' | 'AWAITING_CPF' | 'AWAITING_OTP' | 'VERIFIED'
+export type ConversationState = 'IDLE' | 'WAITING_CPF' | 'WAITING_OTP' | 'AUTHENTICATED' | 'HUMAN_REQUIRED'
 
 export type DbState = {
-  conversas: Array<{ id: string; tenant_id: string; telefone: string; estado: ConversationState; cliente_id: string | null; ultima_interacao: string }>
+  whatsapp_contacts: Array<{
+    id: string
+    tenant_id: string
+    phone_number: string
+    client_id: string | null
+    process_id: string | null
+    verified: boolean
+    conversation_state: ConversationState
+    notifications_opt_in?: boolean
+    cpf_attempts: number
+    otp_attempts: number
+    blocked_until: string | null
+    last_notification_sent_at?: string | null
+    updated_at?: string
+  }>
   clientes: Array<{ id: string; tenant_id: string; cpf: string; nome: string }>
   otp_validacoes: Array<{ id: string; tenant_id: string; telefone: string; otp_hash: string; expires_at: string; tentativas: number }>
-  telefones: Array<{ tenant_id: string; cliente_id: string | null; numero: string; verificado: boolean }>
   whatsapp_auth_rate_limits: Array<{ id: string; tenant_id: string; scope_type: 'PHONE' | 'TENANT_CPF'; scope_hash: string; window_start: string; counter: number }>
   webhook_replay_guard: Array<{ id: string; nonce_hash: string; timestamp_seconds: number; expires_at: string }>
+  conversas?: any[]
+  telefones?: any[]
 }
 
 type AtomicOptions = {
@@ -19,20 +34,21 @@ type AtomicOptions = {
 
 export function createDbState(): DbState {
   return {
-    conversas: [],
+    whatsapp_contacts: [],
     clientes: [{ id: 'cliente-1', tenant_id: 'tenant-1', cpf: '12345678909', nome: 'Cliente Teste' }],
     otp_validacoes: [],
-    telefones: [],
     whatsapp_auth_rate_limits: [],
     webhook_replay_guard: [],
+    conversas: [],
+    telefones: [],
   }
 }
 
 export class FakeSupabase {
   constructor(private state: DbState) {}
 
-  from(table: keyof DbState) {
-    return new QueryBuilder(this.state, table)
+  from(table: keyof DbState | string) {
+    return new QueryBuilder(this.state as any, table as any)
   }
 }
 
@@ -42,7 +58,7 @@ class QueryBuilder {
   private payload: any = null
   private rows: any[] = []
 
-  constructor(private state: DbState, private table: keyof DbState) {}
+  constructor(private state: Record<string, any[]>, private table: string) {}
 
   select(): this {
     this.op = 'select'
@@ -53,6 +69,8 @@ class QueryBuilder {
     this.filters[column] = value
     return this
   }
+
+  not(): this { return this }
 
   insert(payload: any): this {
     this.op = 'insert'
@@ -86,19 +104,16 @@ class QueryBuilder {
 
   upsert(payload: any, options?: { onConflict?: string; atomic?: AtomicOptions }): Promise<{ data: any; error: any }> {
     const tableRows = this.getRows()
-    const conflictColumns = (options?.onConflict ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
+    const conflictColumns = (options?.onConflict ?? '').split(',').map((value) => value.trim()).filter(Boolean)
 
     const inferredConflictColumns = conflictColumns.length
       ? conflictColumns
-      : this.table === 'telefones'
-        ? ['tenant_id', 'numero']
-        : this.table === 'otp_validacoes'
-          ? ['tenant_id', 'telefone']
-          : this.table === 'whatsapp_auth_rate_limits'
-            ? ['tenant_id', 'scope_type', 'scope_hash']
+      : this.table === 'otp_validacoes'
+        ? ['tenant_id', 'telefone']
+        : this.table === 'whatsapp_auth_rate_limits'
+          ? ['tenant_id', 'scope_type', 'scope_hash']
+          : this.table === 'whatsapp_contacts'
+            ? ['tenant_id', 'phone_number']
             : []
 
     const idx = inferredConflictColumns.length
@@ -127,39 +142,16 @@ class QueryBuilder {
       const withinWindow = now.getTime() - previousWindow.getTime() <= windowSeconds * 1000
 
       if (!withinWindow) {
-        tableRows[idx] = {
-          ...tableRows[idx],
-          ...payload,
-          [column]: options.atomic.initial ?? 1,
-          window_start: now.toISOString(),
-        }
+        tableRows[idx] = { ...tableRows[idx], ...payload, [column]: options.atomic.initial ?? 1, window_start: now.toISOString() }
       } else {
-        tableRows[idx] = {
-          ...tableRows[idx],
-          ...payload,
-          [column]: Number(tableRows[idx][column] ?? 0) + 1,
-        }
+        tableRows[idx] = { ...tableRows[idx], ...payload, [column]: Number(tableRows[idx][column] ?? 0) + 1 }
       }
 
       return Promise.resolve({ data: tableRows[idx], error: null })
     }
 
-    if (this.table === 'telefones') {
-      tableRows[idx] = { ...tableRows[idx], ...payload }
-      return Promise.resolve({ data: tableRows[idx], error: null })
-    }
-
-    if (this.table === 'otp_validacoes') {
-      tableRows[idx] = { ...tableRows[idx], ...payload }
-      return Promise.resolve({ data: tableRows[idx], error: null })
-    }
-
-    if (this.table === 'whatsapp_auth_rate_limits') {
-      tableRows[idx] = { ...tableRows[idx], ...payload }
-      return Promise.resolve({ data: tableRows[idx], error: null })
-    }
-
-    return Promise.resolve({ data: payload, error: null })
+    tableRows[idx] = { ...tableRows[idx], ...payload }
+    return Promise.resolve({ data: tableRows[idx], error: null })
   }
 
   order(): this { return this }
@@ -167,10 +159,7 @@ class QueryBuilder {
   in(): this { return this }
 
   maybeSingle(): Promise<{ data: any; error: any }> {
-    if (this.table === 'webhook_replay_guard' && this.payload?.error) {
-      return Promise.resolve({ data: null, error: this.payload.error })
-    }
-
+    if (this.table === 'webhook_replay_guard' && this.payload?.error) return Promise.resolve({ data: null, error: this.payload.error })
     return Promise.resolve({ data: this.resolveRows()[0] ?? null, error: null })
   }
 
@@ -180,15 +169,13 @@ class QueryBuilder {
   }
 
   then(resolve: (value: { data: any; error: any }) => unknown) {
-    if (this.table === 'webhook_replay_guard' && this.payload?.error) {
-      return Promise.resolve({ data: null, error: this.payload.error }).then(resolve)
-    }
-
+    if (this.table === 'webhook_replay_guard' && this.payload?.error) return Promise.resolve({ data: null, error: this.payload.error }).then(resolve)
     return Promise.resolve({ data: this.executeMutation(), error: null }).then(resolve)
   }
 
   private getRows(): any[] {
-    return (this.state[this.table] as any[]) ?? []
+    if (!this.state[this.table]) this.state[this.table] = []
+    return this.state[this.table]
   }
 
   private executeMutation() {
@@ -202,7 +189,7 @@ class QueryBuilder {
 
     if (this.op === 'delete') {
       const rows = this.resolveRows()
-      ;(this.state as any)[this.table] = tableRows.filter((row: any) => !rows.includes(row))
+      this.state[this.table] = tableRows.filter((row: any) => !rows.includes(row))
       return rows
     }
 

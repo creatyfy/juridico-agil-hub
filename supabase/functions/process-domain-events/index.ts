@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { enqueueMessage } from '../_shared/message-outbox-enqueue.ts'
+import { explainMovement } from '../webhook-whatsapp/services/ai.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,15 +10,39 @@ const corsHeaders = {
 const BATCH_SIZE = Number(Deno.env.get('DOMAIN_EVENTS_BATCH_SIZE') ?? '30')
 const LEASE_SECONDS = Number(Deno.env.get('DOMAIN_EVENTS_LEASE_SECONDS') ?? '45')
 const MAX_ATTEMPTS = Number(Deno.env.get('DOMAIN_EVENTS_MAX_ATTEMPTS') ?? '6')
+const DAILY_NOTIFICATION_COOLDOWN_HOURS = Number(Deno.env.get('WHATSAPP_DAILY_NOTIFICATION_COOLDOWN_HOURS') ?? '8')
 
 function backoffMs(attempts: number): number {
   return Math.min(120_000, 1500 * 2 ** Math.max(attempts - 1, 0))
+}
+
+function sameDay(dateA: Date, dateB: Date): boolean {
+  return dateA.getUTCFullYear() === dateB.getUTCFullYear()
+    && dateA.getUTCMonth() === dateB.getUTCMonth()
+    && dateA.getUTCDate() === dateB.getUTCDate()
+}
+
+async function enqueueOutboundLog(
+  svc: ReturnType<typeof createClient>,
+  tenantId: string,
+  phoneNumber: string,
+  message: string,
+  intent: string,
+): Promise<void> {
+  await svc.from('conversation_logs').insert({
+    tenant_id: tenantId,
+    phone_number: phoneNumber,
+    message,
+    direction: 'outbound',
+    intent,
+  })
 }
 
 async function processMovementDetected(svc: ReturnType<typeof createClient>, event: any): Promise<void> {
   const payload = event.payload ?? {}
   const processoId = payload.processo_id as string | undefined
   const resumo = (payload.resumo as string | undefined) ?? 'Nova movimentação processual detectada.'
+  const totalMovimentacoes = Number(payload.total_movimentacoes ?? 1)
 
   if (!processoId) throw new Error('missing_processo_id')
 
@@ -38,11 +63,13 @@ async function processMovementDetected(svc: ReturnType<typeof createClient>, eve
     metadata: { event_id: event.id, resumo },
   })
 
-  const { data: linkedClients } = await svc
-    .from('cliente_processos')
-    .select('clientes(id, nome, numero_whatsapp, status_vinculo), advogado_user_id')
-    .eq('processo_id', processo.id)
-    .eq('status', 'ativo')
+  const summary = await explainMovement(resumo)
+
+  const { data: contacts } = await svc
+    .from('whatsapp_contacts')
+    .select('id, phone_number, client_id, verified, notifications_opt_in, last_notification_sent_at')
+    .eq('tenant_id', processo.user_id)
+    .eq('process_id', processo.id)
 
   const { data: instance } = await svc
     .from('whatsapp_instancias')
@@ -55,33 +82,76 @@ async function processMovementDetected(svc: ReturnType<typeof createClient>, eve
 
   if (!instance) return
 
-  for (const binding of linkedClients ?? []) {
-    const cliente = (binding as any).clientes
-    if (!cliente?.numero_whatsapp || cliente.status_vinculo !== 'ativo') continue
+  for (const contact of contacts ?? []) {
+    if (!contact?.phone_number || !contact.verified) continue
 
-    const destination = String(cliente.numero_whatsapp).replace(/\D/g, '')
-    const reference = `movement:${event.id}:${cliente.id}`
+    const destination = String(contact.phone_number).replace(/\D/g, '')
+
+    if (!contact.notifications_opt_in) {
+      const askOptIn = 'Você deseja receber atualizações automáticas deste processo por WhatsApp? Responda SIM para ativar.'
+      await enqueueMessage({
+        supabase: svc,
+        tenantId: processo.user_id,
+        destination,
+        event: 'process_update_optin',
+        reference: `optin:${event.id}:${contact.id}`,
+        aggregateType: 'processo',
+        aggregateId: processo.id,
+        payload: {
+          kind: 'process_update_optin',
+          destinationNumber: destination,
+          messageText: askOptIn,
+          instanceName: instance.instance_name,
+          instanceId: instance.id,
+          userId: processo.user_id,
+        },
+      })
+      await enqueueOutboundLog(svc, processo.user_id, destination, askOptIn, 'OPT_IN_REQUEST')
+      continue
+    }
+
+    const now = new Date()
+    const lastSentAt = contact.last_notification_sent_at ? new Date(contact.last_notification_sent_at) : null
+    const cooldownActive = lastSentAt
+      ? (now.getTime() - lastSentAt.getTime()) < DAILY_NOTIFICATION_COOLDOWN_HOURS * 60 * 60 * 1000
+      : false
+
+    if (cooldownActive && lastSentAt && sameDay(lastSentAt, now)) {
+      continue
+    }
+
+    const groupedPrefix = totalMovimentacoes > 1
+      ? `Detectamos ${totalMovimentacoes} novas movimentações hoje no processo ${processo.numero_cnj}. `
+      : `Nova movimentação no processo ${processo.numero_cnj}. `
+
+    const messageText = `${groupedPrefix}${summary}`
 
     await enqueueMessage({
       supabase: svc,
       tenantId: processo.user_id,
       destination,
       event: 'process_update',
-      reference,
+      reference: `movement:${event.id}:${contact.id}`,
       aggregateType: 'processo',
       aggregateId: processo.id,
       payload: {
         kind: 'process_update',
         processoId: processo.id,
         processoNumero: processo.numero_cnj,
-        clienteNome: cliente.nome,
         destinationNumber: destination,
-        messageText: `Atualização do processo ${processo.numero_cnj}: ${resumo}`,
+        messageText,
         instanceName: instance.instance_name,
         instanceId: instance.id,
         userId: processo.user_id,
       },
     })
+
+    await enqueueOutboundLog(svc, processo.user_id, destination, messageText, 'PROCESS_STATUS')
+
+    await svc
+      .from('whatsapp_contacts')
+      .update({ last_notification_sent_at: now.toISOString(), updated_at: now.toISOString() })
+      .eq('id', contact.id)
   }
 }
 
