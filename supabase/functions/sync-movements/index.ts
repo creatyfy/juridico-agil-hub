@@ -21,9 +21,113 @@ type JuditStep = {
   resumo?: string
 }
 
+type MonitoramentoRow = {
+  id: string
+  user_id: string
+  processo_id: string
+  judit_request_id?: string | null
+  judit_request_status?: string | null
+  judit_request_attempts?: number | null
+  processos?: {
+    id: string
+    numero_cnj?: string | null
+  } | null
+}
+
 function summarizeMovement(step: JuditStep): string {
   const raw = step.resumo || step.description || step.descricao || step.content || 'Movimentação processual detectada'
   return raw.slice(0, 400)
+}
+
+async function collectCompletedRequest(params: {
+  supabase: ReturnType<typeof createClient>
+  mon: MonitoramentoRow
+  processo: { id: string; numero_cnj?: string | null }
+  requestId: string
+  userId: string | null
+  syncResults: Array<Record<string, unknown>>
+}) {
+  const { supabase, mon, processo, requestId, userId, syncResults } = params
+
+  const resultsData = await juditRequest({
+    tenantKey: mon.user_id,
+    apiKey: Deno.env.get('JUDIT_API_KEY')!,
+    path: `/responses?request_id=${requestId}`,
+  });
+
+  const lawsuitData = Array.isArray(resultsData) ? resultsData[0] : resultsData;
+  const steps: JuditStep[] = lawsuitData?.steps || lawsuitData?.movimentacoes || [];
+
+  let newMovementsCount = 0;
+  if (steps.length > 0) {
+    const { data: existing } = await supabase
+      .from('movimentacoes')
+      .select('judit_movement_id')
+      .eq('processo_id', processo.id)
+      .not('judit_movement_id', 'is', null);
+
+    const existingIds = new Set((existing || []).map((e: { judit_movement_id: string }) => e.judit_movement_id));
+
+    const newMovs = steps
+      .filter((s) => s.id && !existingIds.has(String(s.id)))
+      .map((s) => ({
+        processo_id: processo.id,
+        data_movimentacao: s.date || s.data,
+        tipo: s.type || s.tipo,
+        descricao: s.content || s.description || s.descricao || 'Movimentação',
+        conteudo: s.content || s.descricao,
+        judit_movement_id: String(s.id),
+      }));
+
+    if (newMovs.length > 0) {
+      const { data: insertedMovements, error: movError } = await supabase
+        .from('movimentacoes')
+        .insert(newMovs)
+        .select('id, descricao, judit_movement_id');
+      if (movError) throw movError;
+
+      // Emit domain event so process-domain-events worker dispatches WhatsApp to linked clients
+      for (const mov of (insertedMovements ?? [])) {
+        await supabase.from('domain_events').upsert({
+          tenant_id: mon.user_id,
+          event_type: 'PROCESS_MOVEMENT_DETECTED',
+          dedupe_key: `${processo.id}:${mov.judit_movement_id ?? mov.id}`,
+          payload: {
+            processo_id: processo.id,
+            movement_id: mov.id,
+            resumo: mov.descricao,
+            total_movimentacoes: newMovs.length,
+          },
+        }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true });
+      }
+      newMovementsCount = newMovs.length;
+    }
+  }
+
+  syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovementsCount, domain_events_emitted: newMovementsCount });
+
+  await logTenantAction(supabase, {
+    tenantId: mon.user_id,
+    userId: userId || mon.user_id,
+    action: 'processo_sincronizado',
+    entity: 'processo',
+    entityId: processo.id,
+    metadata: {
+      numero_cnj: processo.numero_cnj,
+      novas_movimentacoes: newMovementsCount,
+      domain_events_emitted: newMovementsCount,
+      source: 'sync-movements-event-driven',
+    },
+  });
+
+  await supabase
+    .from('processo_monitoramentos')
+    .update({
+      ultima_sync: new Date().toISOString(),
+      judit_request_status: 'done',
+      judit_request_attempts: 0,
+    })
+    .eq('id', mon.id);
 }
 
 serve(async (req) => {
@@ -68,11 +172,54 @@ serve(async (req) => {
 
     const syncResults: Array<Record<string, unknown>> = [];
 
-    for (const mon of (monitoramentos || [])) {
-      const processo = (mon as any).processos;
+    for (const mon of (monitoramentos || []) as MonitoramentoRow[]) {
+      const processo = mon.processos;
       if (!processo?.numero_cnj) continue;
 
       try {
+        const requestId = mon.judit_request_id;
+        const requestStatus = mon.judit_request_status;
+        const requestAttempts = mon.judit_request_attempts || 0;
+
+        if (requestId && requestStatus === 'pending') {
+          const statusData = await juditRequest({
+            tenantKey: mon.user_id,
+            apiKey: JUDIT_API_KEY,
+            path: `/requests/${requestId}`,
+          }) as any;
+
+          if (statusData.request_status === 'completed' || statusData.request_status === 'done') {
+            await collectCompletedRequest({
+              supabase,
+              mon,
+              processo,
+              requestId,
+              userId,
+              syncResults,
+            });
+            continue;
+          }
+
+          const nextAttempts = requestAttempts + 1;
+          if (nextAttempts >= 3) {
+            await supabase
+              .from('processo_monitoramentos')
+              .update({
+                judit_request_status: 'failed',
+                judit_request_attempts: nextAttempts,
+              })
+              .eq('id', mon.id);
+            syncResults.push({ cnj: processo.numero_cnj, status: 'failed', requestId, attempts: nextAttempts });
+          } else {
+            await supabase
+              .from('processo_monitoramentos')
+              .update({ judit_request_attempts: nextAttempts })
+              .eq('id', mon.id);
+            syncResults.push({ cnj: processo.numero_cnj, status: 'pending', requestId, attempts: nextAttempts });
+          }
+          continue;
+        }
+
         const createData = await juditRequest({
           tenantKey: mon.user_id,
           apiKey: JUDIT_API_KEY,
@@ -87,104 +234,18 @@ serve(async (req) => {
           },
         });
 
-        const requestId = (createData as any).request_id;
-
-        let attempts = 0;
-        let completed = false;
-        while (attempts < 6 && !completed) {
-          await new Promise((r) => setTimeout(r, 5000));
-          const statusData = await juditRequest({
-            tenantKey: mon.user_id,
-            apiKey: JUDIT_API_KEY,
-            path: `/requests/${requestId}`,
-          }) as any;
-
-          if (statusData.request_status === 'completed' || statusData.request_status === 'done') {
-            completed = true;
-          }
-          attempts++;
-        }
-
-        if (!completed) {
-          syncResults.push({ cnj: processo.numero_cnj, status: 'pending', requestId });
-          continue;
-        }
-
-        const resultsData = await juditRequest({
-          tenantKey: mon.user_id,
-          apiKey: JUDIT_API_KEY,
-          path: `/responses?request_id=${requestId}`,
-        });
-
-        const lawsuitData = Array.isArray(resultsData) ? resultsData[0] : resultsData;
-        const steps: JuditStep[] = lawsuitData?.steps || lawsuitData?.movimentacoes || [];
-
-        let newMovementsCount = 0;
-        if (steps.length > 0) {
-          const { data: existing } = await supabase
-            .from('movimentacoes')
-            .select('judit_movement_id')
-            .eq('processo_id', processo.id)
-            .not('judit_movement_id', 'is', null);
-
-          const existingIds = new Set((existing || []).map((e: { judit_movement_id: string }) => e.judit_movement_id));
-
-          const newMovs = steps
-            .filter((s) => s.id && !existingIds.has(String(s.id)))
-            .map((s) => ({
-              processo_id: processo.id,
-              data_movimentacao: s.date || s.data,
-              tipo: s.type || s.tipo,
-              descricao: s.content || s.description || s.descricao || 'Movimentação',
-              conteudo: s.content || s.descricao,
-              judit_movement_id: String(s.id),
-            }));
-
-          if (newMovs.length > 0) {
-            const { data: insertedMovements, error: movError } = await supabase
-              .from('movimentacoes')
-              .insert(newMovs)
-              .select('id, descricao, judit_movement_id');
-            if (movError) throw movError;
-
-            // Emit domain event so process-domain-events worker dispatches WhatsApp to linked clients
-            for (const mov of (insertedMovements ?? [])) {
-              await supabase.from('domain_events').upsert({
-                tenant_id: mon.user_id,
-                event_type: 'PROCESS_MOVEMENT_DETECTED',
-                dedupe_key: `${processo.id}:${mov.judit_movement_id ?? mov.id}`,
-                payload: {
-                  processo_id: processo.id,
-                  movement_id: mov.id,
-                  resumo: mov.descricao,
-                  total_movimentacoes: newMovs.length,
-                },
-              }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true });
-            }
-            newMovementsCount = newMovs.length;
-          }
-        }
-
-        syncResults.push({ cnj: processo.numero_cnj, newMovements: newMovementsCount, domain_events_emitted: newMovementsCount });
-
-        await logTenantAction(supabase, {
-          tenantId: mon.user_id,
-          userId: userId || mon.user_id,
-          action: 'processo_sincronizado',
-          entity: 'processo',
-          entityId: processo.id,
-          metadata: {
-            numero_cnj: processo.numero_cnj,
-            novas_movimentacoes: newMovementsCount,
-            domain_events_emitted: newMovementsCount,
-            source: 'sync-movements-event-driven',
-          },
-        });
-
+        const newRequestId = (createData as any).request_id;
         await supabase
           .from('processo_monitoramentos')
-          .update({ ultima_sync: new Date().toISOString() })
+          .update({
+            judit_request_id: newRequestId,
+            judit_request_status: 'pending',
+            judit_request_attempts: 0,
+            judit_request_created_at: new Date().toISOString(),
+          })
           .eq('id', mon.id);
+
+        syncResults.push({ cnj: processo.numero_cnj, status: 'requested', requestId: newRequestId });
       } catch {
         syncResults.push({ cnj: processo.numero_cnj, error: 'sync_failed' });
       }
