@@ -69,12 +69,28 @@ async function evaluateTenantCircuits(svc: AnySupabase, correlationId: string) {
         tenant_id: metric.tenant_id,
         reason: decision?.reason,
       })
+      await svc.from('notificacoes').insert({
+        user_id: metric.tenant_id,
+        tipo: 'circuit_breaker',
+        titulo: 'Envio de mensagens suspenso',
+        mensagem: 'Muitas falhas de entrega detectadas. O envio automático de mensagens WhatsApp foi temporariamente suspenso. Verifique a conexão em Atendimento.',
+        link: '/atendimento',
+        metadata: { reason: decision?.reason, correlation_id: correlationId },
+      })
     } else if (action === 'closed') {
       closed += 1
       log('info', 'tenant_circuit_closed', {
         correlation_id: correlationId,
         tenant_id: metric.tenant_id,
         reason: decision?.reason,
+      })
+      await svc.from('notificacoes').insert({
+        user_id: metric.tenant_id,
+        tipo: 'circuit_breaker_closed',
+        titulo: 'Envio de mensagens normalizado',
+        mensagem: 'O envio automático de mensagens WhatsApp foi retomado com sucesso.',
+        link: '/atendimento',
+        metadata: { reason: decision?.reason, correlation_id: correlationId },
       })
     }
   }

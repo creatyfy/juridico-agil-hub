@@ -75,9 +75,22 @@ export async function getClientProcessByCPF(ctx: RequestContext, cpf: string): P
 
 export async function handleIncomingMessage(ctx: RequestContext & { clienteId: string }) {
   try {
+    // Fetch recent history BEFORE logging current message to avoid self-inclusion
+    const { data: recentLogs } = await ctx.supabase
+      .from('conversation_logs')
+      .select('direction, message')
+      .eq('tenant_id', ctx.tenantId)
+      .eq('phone_number', ctx.phone)
+      .order('created_at', { ascending: false })
+      .limit(3)
+
     await logConversation(ctx, 'inbound', ctx.message)
 
-    const intent = await classifyIntent(ctx.message)
+    const history = (recentLogs ?? []).reverse()
+    const contextLines = history.map(l => `${l.direction === 'inbound' ? 'Cliente' : 'Bot'}: ${l.message}`).join('\n')
+    const intentInput = history.length > 0 ? `${contextLines}\nCliente: ${ctx.message}` : ctx.message
+
+    const intent = await classifyIntent(intentInput)
 
     logInfo('orchestrator_decision', {
       request_id: ctx.requestId,
