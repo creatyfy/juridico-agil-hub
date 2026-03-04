@@ -1,5 +1,5 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { FileText, Users, AlertTriangle, TrendingUp } from 'lucide-react';
+import { FileText, Users, AlertTriangle, TrendingUp, MessageCircle } from 'lucide-react';
 import StatsCard from '@/components/StatsCard';
 import { useProcessos } from '@/hooks/useProcessos';
 import { Link } from 'react-router-dom';
@@ -14,6 +14,8 @@ export default function AdvogadoDashboard() {
   const [totalClientes, setTotalClientes] = useState(0);
   const [clientesAtivos, setClientesAtivos] = useState(0);
   const [processosSemCliente, setProcessosSemCliente] = useState(0);
+  const [msgsSemana, setMsgsSemana] = useState(0);
+  const [clientesWhatsApp, setClientesWhatsApp] = useState(0);
 
   useEffect(() => {
     async function fetchRecentMovs() {
@@ -72,6 +74,29 @@ export default function AdvogadoDashboard() {
     fetchClientes();
   }, []);
 
+  useEffect(() => {
+    async function fetchWhatsAppStats() {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const { count: msgs } = await supabase
+        .from('message_outbox')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', sevenDaysAgo.toISOString())
+        .in('status', ['sent', 'delivered', 'pending', 'retry']);
+
+      const { count: wppClientes } = await supabase
+        .from('whatsapp_contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('verified', true)
+        .eq('notifications_opt_in', true);
+
+      setMsgsSemana(msgs || 0);
+      setClientesWhatsApp(wppClientes || 0);
+    }
+    fetchWhatsAppStats();
+  }, []);
+
   return (
     <div className="space-y-6">
       <OnboardingBanner />
@@ -82,25 +107,49 @@ export default function AdvogadoDashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
-          title="Total de Processos"
-          value={loading ? '...' : processos.length}
-          icon={<FileText className="h-5 w-5" />}
-        />
-        <StatsCard
-          title="Movimentações Recentes"
-          value={recentMovs}
-          subtitle="Últimos 7 dias"
-          icon={<TrendingUp className="h-5 w-5" />}
-        />
-        <StatsCard
-          title="Alertas"
-          value={processosSemCliente}
-          subtitle={processosSemCliente > 0 ? 'Processos sem cliente vinculado' : 'Nenhum alerta'}
-          icon={<AlertTriangle className="h-5 w-5" />}
-        />
-        <StatsCard title="Clientes" value={totalClientes} subtitle={`${clientesAtivos} ativo(s) no sistema`} icon={<Users className="h-5 w-5" />} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard
+            title="Total de Processos"
+            value={loading ? '...' : processos.length}
+            icon={<FileText className="h-5 w-5" />}
+          />
+        </div>
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard
+            title="Movimentações"
+            value={recentMovs}
+            subtitle="Últimos 7 dias"
+            icon={<TrendingUp className="h-5 w-5" />}
+          />
+        </div>
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard
+            title="Alertas"
+            value={processosSemCliente}
+            subtitle={processosSemCliente > 0 ? 'Sem cliente vinculado' : 'Nenhum alerta'}
+            icon={<AlertTriangle className="h-5 w-5" />}
+          />
+        </div>
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard title="Clientes" value={totalClientes} subtitle={`${clientesAtivos} ativo(s)`} icon={<Users className="h-5 w-5" />} />
+        </div>
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard
+            title="Msgs WhatsApp"
+            value={msgsSemana}
+            subtitle="Últimos 7 dias"
+            icon={<MessageCircle className="h-5 w-5" />}
+          />
+        </div>
+        <div className="xl:col-span-1 sm:col-span-1">
+          <StatsCard
+            title="Clientes c/ WhatsApp"
+            value={clientesWhatsApp}
+            subtitle="Notificações ativas"
+            icon={<MessageCircle className="h-5 w-5" />}
+          />
+        </div>
       </div>
 
       {processosSemCliente > 0 && (
@@ -144,6 +193,9 @@ export default function AdvogadoDashboard() {
             </Link>
             <Link to="/processos" className="block p-3 rounded-lg hover:bg-accent/5 transition-colors border border-border/50 text-sm">
               🔄 Atualizar movimentações
+            </Link>
+            <Link to="/campanhas" className="block p-3 rounded-lg hover:bg-accent/5 transition-colors border border-border/50 text-sm">
+              📣 Criar campanha WhatsApp
             </Link>
           </div>
         </div>

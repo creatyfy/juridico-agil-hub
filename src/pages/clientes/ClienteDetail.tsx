@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
-import { useState } from 'react';
-import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,47 @@ export default function ClienteDetail() {
   const [generatingLink, setGeneratingLink] = useState(false);
   const [vinculacaoLink, setVinculacaoLink] = useState<string | null>(null);
   const [vinculacaoCopied, setVinculacaoCopied] = useState(false);
+
+  // Message history state
+  interface MessageRecord {
+    id: string;
+    created_at: string;
+    status: string;
+    payload: { message?: string; text?: string };
+  }
+  const [mensagens, setMensagens] = useState<MessageRecord[]>([]);
+  const [loadingMsgs, setLoadingMsgs] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    async function fetchMensagens() {
+      setLoadingMsgs(true);
+      // Get verified phone for this client
+      const { data: contact } = await supabase
+        .from('whatsapp_contacts')
+        .select('phone_number')
+        .eq('cliente_id', id)
+        .eq('verified', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (!contact?.phone_number) {
+        setLoadingMsgs(false);
+        return;
+      }
+
+      const { data: msgs } = await supabase
+        .from('message_outbox')
+        .select('id, created_at, status, payload')
+        .filter('payload->>destinationNumber', 'eq', contact.phone_number)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      setMensagens((msgs as MessageRecord[]) ?? []);
+      setLoadingMsgs(false);
+    }
+    fetchMensagens();
+  }, [id]);
 
   const processosVinculados = processos.filter(p => {
     const partes = Array.isArray(p.partes) ? p.partes : [];
@@ -300,6 +341,40 @@ export default function ClienteDetail() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Message history */}
+      <div className="bg-card rounded-xl border p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5 text-accent" />
+          <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Histórico de mensagens WhatsApp</h2>
+        </div>
+        {loadingMsgs ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : mensagens.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhuma mensagem enviada ainda. Vincule o WhatsApp do cliente para começar a enviar notificações.</p>
+        ) : (
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {mensagens.map(msg => {
+              const text = msg.payload?.message || msg.payload?.text || '—';
+              return (
+                <div key={msg.id} className="flex items-start justify-between gap-4 p-3 rounded-lg border">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground line-clamp-2">{text}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{new Date(msg.created_at).toLocaleString('pt-BR')}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
+                    msg.status === 'sent' || msg.status === 'delivered' ? 'bg-green-500/10 text-green-700' :
+                    msg.status === 'failed' ? 'bg-red-500/10 text-red-700' :
+                    'bg-muted text-muted-foreground'
+                  }`}>{msg.status}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Invite Dialog */}

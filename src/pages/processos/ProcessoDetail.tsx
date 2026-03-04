@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, FileText, RefreshCw, Loader2, AlertTriangle, UserRound, Pencil } from 'lucide-react';
+import { ArrowLeft, FileText, RefreshCw, Loader2, AlertTriangle, UserRound, Pencil, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -34,6 +35,9 @@ export default function ProcessoDetail() {
   const [linkedClient, setLinkedClient] = useState<ProcessoClientLink | null>(null);
   const [selectedClient, setSelectedClient] = useState('');
   const [savingClient, setSavingClient] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyMsg, setNotifyMsg] = useState('');
+  const [notifying, setNotifying] = useState(false);
   const { movimentacoes, loading: movsLoading, refetch: refetchMovs } = useMovimentacoes(id);
   const { clientes } = useClientes();
 
@@ -115,6 +119,23 @@ export default function ProcessoDetail() {
     setSavingClient(false);
   };
 
+  const handleNotify = async () => {
+    if (!id) return;
+    setNotifying(true);
+    try {
+      const { error } = await supabase.functions.invoke('notify-process-update', {
+        body: { processo_id: id, ...(notifyMsg.trim() ? { mensagem_personalizada: notifyMsg.trim() } : {}) },
+      });
+      if (error) throw error;
+      toast.success('Notificação enviada ao cliente');
+      setNotifyOpen(false);
+      setNotifyMsg('');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao enviar notificação');
+    }
+    setNotifying(false);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
@@ -154,10 +175,18 @@ export default function ProcessoDetail() {
             <p className="text-sm text-muted-foreground">{processo.classe}{processo.tribunal ? ` • ${processo.tribunal}` : ''}</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-          Atualizar
-        </Button>
+        <div className="flex gap-2">
+          {linkedClient && (
+            <Button variant="outline" size="sm" onClick={() => setNotifyOpen(true)}>
+              <Bell className="h-4 w-4 mr-2" />
+              Notificar cliente
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+            Atualizar
+          </Button>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -301,6 +330,35 @@ export default function ProcessoDetail() {
           </div>
         )}
       </div>
+
+      {/* Notify client dialog */}
+      <Dialog open={notifyOpen} onOpenChange={setNotifyOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Notificar cliente via WhatsApp</DialogTitle>
+            <DialogDescription>
+              Envie uma atualização sobre este processo para {linkedClient?.nome}. Deixe em branco para usar a mensagem padrão com a última movimentação.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Textarea
+              placeholder="Mensagem personalizada (opcional)..."
+              value={notifyMsg}
+              onChange={(e) => setNotifyMsg(e.target.value)}
+              rows={4}
+              maxLength={1000}
+            />
+            <p className="text-xs text-muted-foreground text-right">{notifyMsg.length}/1000</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setNotifyOpen(false); setNotifyMsg(''); }}>Cancelar</Button>
+              <Button onClick={handleNotify} disabled={notifying}>
+                {notifying ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Bell className="h-4 w-4 mr-2" />}
+                Enviar notificação
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

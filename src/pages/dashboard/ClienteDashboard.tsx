@@ -1,9 +1,14 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { FileText, Scale } from 'lucide-react';
+import { FileText, Scale, Clock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import StatusBadge from '@/components/StatusBadge';
+
+interface Movimentacao {
+  descricao: string | null;
+  data_movimentacao: string | null;
+}
 
 interface ProcessoVinculado {
   id: string;
@@ -11,6 +16,7 @@ interface ProcessoVinculado {
   classe: string | null;
   tribunal: string | null;
   status: string | null;
+  ultimaMovimentacao?: Movimentacao | null;
 }
 
 export default function ClienteDashboard() {
@@ -72,7 +78,26 @@ export default function ClienteDashboard() {
         .select('id, numero_cnj, classe, tribunal, status')
         .in('id', processoIds);
 
-      if (procs) setProcessos(procs);
+      if (!procs) {
+        setLoading(false);
+        return;
+      }
+
+      // Fetch last movement per process
+      const procsWithMovs: ProcessoVinculado[] = await Promise.all(
+        procs.map(async (proc) => {
+          const { data: mov } = await supabase
+            .from('movimentacoes')
+            .select('descricao, data_movimentacao')
+            .eq('processo_id', proc.id)
+            .order('data_movimentacao', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          return { ...proc, ultimaMovimentacao: mov ?? null };
+        })
+      );
+
+      setProcessos(procsWithMovs);
       setLoading(false);
     }
 
@@ -99,10 +124,10 @@ export default function ClienteDashboard() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {processos.map(proc => (
             <Link key={proc.id} to={`/processos/${proc.id}`} className="block">
-              <div className="bg-card rounded-xl border p-4 hover:border-accent/40 hover:bg-accent/5 transition-all">
+              <div className="bg-card rounded-xl border p-4 hover:border-accent/40 hover:bg-accent/5 transition-all space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <Scale className="h-5 w-5 text-accent shrink-0" />
@@ -115,6 +140,21 @@ export default function ClienteDashboard() {
                     {proc.status || 'ativo'}
                   </StatusBadge>
                 </div>
+                {proc.ultimaMovimentacao ? (
+                  <div className="flex items-start gap-2 pl-8 border-t pt-3">
+                    <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">
+                        {proc.ultimaMovimentacao.data_movimentacao
+                          ? new Date(proc.ultimaMovimentacao.data_movimentacao).toLocaleDateString('pt-BR')
+                          : 'Sem data'}
+                      </p>
+                      <p className="text-sm text-foreground/80 line-clamp-2">{proc.ultimaMovimentacao.descricao}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground pl-8 border-t pt-3">Sem movimentações registradas ainda.</p>
+                )}
               </div>
             </Link>
           ))}
