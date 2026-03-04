@@ -24,6 +24,7 @@ export interface Message {
   tipo: string | null;
   timestamp: string;
   message_id: string | null;
+  status_entrega?: string | null;
 }
 
 function callEvolution(action: string, params?: Record<string, string>, body?: any) {
@@ -211,6 +212,38 @@ export function useWhatsApp() {
     if (user) checkStatus();
   }, [user, checkStatus]);
 
+  // Realtime: instance connection status (works regardless of local status state)
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('whatsapp-instance-status')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'whatsapp_instancias',
+      }, (payload) => {
+        const inst = payload.new as any;
+        if (inst.status === 'connected') {
+          setStatus('connected');
+        } else if (inst.status === 'connecting') {
+          setStatus('connecting');
+        } else {
+          setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
+
+  // Webhook healthcheck: re-register every 5 min while connected to survive Evolution restarts
+  useEffect(() => {
+    if (status !== 'connected') return;
+    const interval = setInterval(() => {
+      callEvolution('set-webhook', undefined, {}).catch(e => console.warn('webhook-healthcheck:', e));
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [status]);
+
   // Poll status while connecting
   useEffect(() => {
     if (status !== 'connecting') return;
@@ -268,8 +301,22 @@ export function useWhatsApp() {
               tipo: newMsg.tipo,
               timestamp: newMsg.timestamp,
               message_id: newMsg.message_id,
+              status_entrega: newMsg.status_entrega ?? null,
             }];
           });
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'whatsapp_mensagens',
+      }, (payload) => {
+        const updated = payload.new as any;
+        const currentChat = selectedChatRef.current;
+        if (currentChat && updated.remote_jid === currentChat) {
+          setMessages(prev => prev.map(m =>
+            m.id === updated.id ? { ...m, status_entrega: updated.status_entrega ?? m.status_entrega } : m
+          ));
         }
       })
       .subscribe();

@@ -13,7 +13,7 @@ const corsHeaders = {
 
 const BATCH_SIZE = Number(Deno.env.get('WHATSAPP_INBOUND_BATCH_SIZE') ?? '20')
 const LEASE_SECONDS = Number(Deno.env.get('WHATSAPP_INBOUND_LEASE_SECONDS') ?? '45')
-const CONVERSATION_LOCK_SECONDS = Number(Deno.env.get('WHATSAPP_CONVERSATION_LOCK_SECONDS') ?? '120')
+const CONVERSATION_LOCK_SECONDS = Number(Deno.env.get('WHATSAPP_CONVERSATION_LOCK_SECONDS') ?? '10')
 const MAX_ATTEMPTS = Number(Deno.env.get('WHATSAPP_INBOUND_MAX_ATTEMPTS') ?? '8')
 
 function backoffMs(attempts: number): number {
