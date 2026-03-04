@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X, Loader2 } from 'lucide-react';
+import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X, Loader2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -97,12 +97,13 @@ function ChatListItem({ chat, isSelected, onSelect }: { chat: ChatItem; isSelect
   );
 }
 
-function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchChange }: {
+function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchChange, onRefresh }: {
   chats: ChatItem[];
   selectedChat: string | null;
   onSelect: (jid: string) => void;
   searchTerm: string;
   onSearchChange: (v: string) => void;
+  onRefresh: () => void;
 }) {
   const filtered = chats.filter(c =>
     c.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -111,10 +112,15 @@ function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchC
 
   return (
     <div className="flex flex-col h-full border-r">
-      <div className="p-3 border-b bg-card">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Buscar conversa..." value={searchTerm} onChange={e => onSearchChange(e.target.value)} className="pl-9" />
+      <div className="p-3 border-b bg-card space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input placeholder="Buscar conversa..." value={searchTerm} onChange={e => onSearchChange(e.target.value)} className="pl-9" />
+          </div>
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={onRefresh} title="Atualizar conversas">
+            <RotateCcw className="h-4 w-4" />
+          </Button>
         </div>
       </div>
       <ScrollArea className="flex-1">
@@ -135,6 +141,35 @@ function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchC
   );
 }
 
+function DeliveryTick({ status }: { status?: string | null }) {
+  if (status === 'error') return <span className="text-[9px]">⚠</span>;
+  if (status === 'read' || status === 'played') return <span className="text-[9px] text-blue-300">✓✓</span>;
+  if (status === 'delivered') return <span className="text-[9px]">✓✓</span>;
+  if (status === 'sent') return <span className="text-[9px]">✓</span>;
+  return <span className="text-[9px] opacity-50">🕐</span>;
+}
+
+function formatDateLabel(timestamp: string): string {
+  const d = new Date(timestamp);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.floor((today.getTime() - msgDay.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return 'Hoje';
+  if (diffDays === 1) return 'Ontem';
+  return format(d, "d 'de' MMMM", { locale: ptBR });
+}
+
+function DateSeparator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 my-2">
+      <div className="flex-1 h-px bg-border/40" />
+      <span className="text-[10px] text-muted-foreground px-2 select-none">{label}</span>
+      <div className="flex-1 h-px bg-border/40" />
+    </div>
+  );
+}
+
 function MessageBubble({ msg }: { msg: Message }) {
   const isOut = msg.direcao === 'out';
   return (
@@ -145,8 +180,9 @@ function MessageBubble({ msg }: { msg: Message }) {
           : 'bg-card border border-border rounded-bl-none'
       }`}>
         <p className="whitespace-pre-wrap break-words">{msg.conteudo || '[mídia]'}</p>
-        <p className={`text-[10px] mt-1 text-right ${isOut ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+        <p className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${isOut ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
           {format(new Date(msg.timestamp), 'HH:mm')}
+          {isOut && <DeliveryTick status={msg.status_entrega} />}
         </p>
       </div>
     </div>
@@ -212,9 +248,16 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack }: {
               Nenhuma mensagem ainda. Envie a primeira!
             </div>
           )}
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} />
-          ))}
+          {messages.map((msg, i) => {
+            const label = formatDateLabel(msg.timestamp);
+            const showSeparator = i === 0 || formatDateLabel(messages[i - 1].timestamp) !== label;
+            return (
+              <div key={msg.id}>
+                {showSeparator && <DateSeparator label={label} />}
+                <MessageBubble msg={msg} />
+              </div>
+            );
+          })}
           <div ref={scrollRef} />
         </div>
       </ScrollArea>
@@ -316,6 +359,7 @@ export default function Atendimento() {
               onSelect={(jid) => wpp.loadMessages(jid)}
               searchTerm={searchTerm}
               onSearchChange={setSearchTerm}
+              onRefresh={wpp.loadChats}
             />
           </div>
           <div className={`flex-1 ${!wpp.selectedChat ? 'hidden md:flex' : 'flex'} flex-col`}>

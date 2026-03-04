@@ -15,12 +15,21 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
   })
 }
 
+const DELIVERY_STATUS_MAP: Record<number, string> = {
+  0: 'error', 1: 'pending', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'played',
+}
+
 function extractMessageText(msg: any): string | null {
   const msgContent = msg?.message || {}
   return msgContent.conversation
     || msgContent.extendedTextMessage?.text
     || msgContent.imageMessage?.caption
     || msgContent.videoMessage?.caption
+    || (msgContent.imageMessage ? '[imagem]' : null)
+    || (msgContent.videoMessage ? '[vídeo]' : null)
+    || (msgContent.audioMessage ? '[áudio]' : null)
+    || (msgContent.documentMessage ? '[documento]' : null)
+    || (msgContent.stickerMessage ? '[sticker]' : null)
     || null
 }
 
@@ -50,7 +59,7 @@ Deno.serve(async (req) => {
     }
 
     if (webhookValidation.reason === 'hmac_skipped_no_headers') {
-      logInfo('webhook_hmac_not_present', { instanceName, correlationId })
+      logError('webhook_hmac_not_present', { instanceName, correlationId })
     }
 
     const { data: instance } = await supabase
@@ -60,7 +69,28 @@ Deno.serve(async (req) => {
       .maybeSingle()
 
     if (!instance) return jsonResponse({ ok: true, correlation_id: correlationId })
-    if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') return jsonResponse({ ok: true, correlation_id: correlationId })
+
+    // Handle delivery status updates from Evolution API
+    if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
+      const items = Array.isArray(body.data) ? body.data : body.data ? [body.data] : []
+      for (const item of items) {
+        const msgId = item?.key?.id as string | undefined
+        const statusNum = item?.update?.status as number | undefined
+        if (!msgId || statusNum == null) continue
+        const statusStr = DELIVERY_STATUS_MAP[statusNum] ?? null
+        if (!statusStr) continue
+        await supabase
+          .from('whatsapp_mensagens')
+          .update({ status_entrega: statusStr, updated_at: new Date().toISOString() })
+          .eq('tenant_id', instance.user_id)
+          .eq('message_id', msgId)
+      }
+      return jsonResponse({ ok: true, correlation_id: correlationId })
+    }
+
+    if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
+      return jsonResponse({ ok: true, correlation_id: correlationId })
+    }
 
     const payloadMessages = Array.isArray(body.data)
       ? body.data
