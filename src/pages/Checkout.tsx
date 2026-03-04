@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { supabase } from '@/integrations/supabase/client';
+
 import { useToast } from '@/hooks/use-toast';
 import { enterprisePricing, PLAN_CATALOG } from '@/lib/pricing';
 import { parseCheckoutSearchParams } from '@/lib/checkout';
@@ -287,41 +287,10 @@ export default function Checkout() {
     setIsSubmitting(true);
 
     try {
-      const [{ data: authData }, { data: planData, error: planError }] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.from('plans').select('id').eq('slug', plan.slug).single(),
-      ]);
+      // TODO: integrar gateway de pagamento aqui (criação de cobrança/intent).
+      // Por enquanto, simula sucesso e redireciona.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      if (planError || !planData) {
-        throw new Error('Plano não encontrado no banco.');
-      }
-
-      const { error: orderError } = await supabase.from('orders').insert({
-        user_id: authData.user?.id ?? null,
-        plan_id: planData.id,
-        billing_cycle: billingCycle,
-        processes_count: plan.isEnterprise ? processesCount : null,
-        payment_method: paymentMethod,
-        status: 'pending',
-        total_amount: total,
-        customer_name: form.customerName,
-        customer_document: onlyDigits(form.customerDocument),
-        customer_email: form.customerEmail,
-        customer_phone: onlyDigits(form.customerPhone),
-        address_zip: onlyDigits(form.addressZip),
-        address_street: form.addressStreet,
-        address_number: form.addressNumber,
-        address_complement: form.addressComplement || null,
-        address_neighborhood: form.addressNeighborhood,
-        address_city: form.addressCity,
-        address_state: form.addressState,
-      });
-
-      if (orderError) {
-        throw orderError;
-      }
-
-      // TODO: integrar gateway de pagamento aqui (criação de cobrança/intent) antes da confirmação final.
       navigate(
         `/checkout/sucesso?plan=${plan.slug}&cycle=${billingCycle}&total=${total}&method=${paymentMethod}&email=${encodeURIComponent(form.customerEmail)}`,
       );

@@ -63,11 +63,6 @@ export default function LandingPage() {
                 Entrar
               </Button>
             </Link>
-            <Link to="/cadastro/advogado">
-              <Button className="btn-accent text-sm px-5">
-                Testar Agora
-              </Button>
-            </Link>
           </div>
         </div>
       </header>
