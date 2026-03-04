@@ -311,7 +311,9 @@ export default function VincularWhatsApp() {
               className="mt-0.5"
             />
             <label htmlFor="consentimento" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
-              Concordo em receber atualizações automáticas sobre meu processo via WhatsApp. Posso cancelar a qualquer momento.
+              Autorizo o recebimento de notificações automáticas sobre meus processos via WhatsApp pelo escritório responsável.
+              Os dados são tratados conforme a <strong>LGPD (Lei 13.709/2018)</strong> e este consentimento pode ser
+              revogado a qualquer momento respondendo "PARAR" no WhatsApp.
             </label>
           </div>
 
