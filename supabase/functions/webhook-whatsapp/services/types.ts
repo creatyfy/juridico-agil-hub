@@ -13,4 +13,4 @@ export type RequestContext = {
   message: string
 }
 
-export type Intent = 'PROCESS_STATUS' | 'HUMAN_SUPPORT' | 'NEW_CLIENT' | 'OTHER'
+export type Intent = 'PROCESS_STATUS' | 'HUMAN_SUPPORT' | 'NEW_CLIENT' | 'OPT_OUT' | 'OTHER'

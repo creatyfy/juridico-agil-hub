@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Pencil, Save, X, Wifi, WifiOff, CheckCircle } from 'lucide-react';
+import { Pencil, Save, X, Wifi, WifiOff, CheckCircle, Bell } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,6 +16,14 @@ export default function Configuracoes() {
   const [saving, setSaving] = useState(false);
   const [nome, setNome] = useState(user?.name ?? '');
   const [whatsapp, setWhatsapp] = useState(user?.whatsapp ?? '');
+  const [reminderDays, setReminderDays] = useState(7);
+  const [savingReminder, setSavingReminder] = useState(false);
+
+  useEffect(() => {
+    supabase.rpc('get_reminder_days').then(({ data }) => {
+      if (data != null) setReminderDays(data as number);
+    });
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -37,6 +45,17 @@ export default function Configuracoes() {
     setNome(user?.name ?? '');
     setWhatsapp(user?.whatsapp ?? '');
     setEditing(false);
+  };
+
+  const handleSaveReminder = async () => {
+    setSavingReminder(true);
+    const { error } = await supabase.rpc('set_reminder_days', { p_days: reminderDays });
+    setSavingReminder(false);
+    if (error) {
+      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Preferência salva', description: `Lembretes serão enviados após ${reminderDays} dias sem novidades.` });
+    }
   };
 
   return (
@@ -131,6 +150,35 @@ export default function Configuracoes() {
           </div>
         </div>
       </div>
+
+      {/* Reminder settings */}
+      {user?.role === 'advogado' && (
+        <div className="card-elevated p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Bell className="h-5 w-5 text-accent" />
+            <h3 className="text-lg font-semibold">Lembrete proativo</h3>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Quando um processo ficar sem movimentação por esse número de dias, seus clientes receberão uma mensagem informativa automaticamente.
+          </p>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={1}
+              max={90}
+              value={reminderDays}
+              onChange={(e) => setReminderDays(Math.max(1, Math.min(90, Number(e.target.value))))}
+              className="input-field w-24 text-center"
+            />
+            <span className="text-sm text-muted-foreground">dias sem movimentação</span>
+            <Button size="sm" onClick={handleSaveReminder} disabled={savingReminder}>
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {savingReminder ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">Mínimo 1 dia, máximo 90 dias. Padrão: 7 dias.</p>
+        </div>
+      )}
 
       {/* WhatsApp Integration */}
       {user?.role === 'advogado' && (

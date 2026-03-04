@@ -4,11 +4,12 @@ import type { Intent } from './types.ts'
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini'
 
-const INTENTS: Intent[] = ['PROCESS_STATUS', 'HUMAN_SUPPORT', 'NEW_CLIENT', 'OTHER']
+const INTENTS: Intent[] = ['PROCESS_STATUS', 'HUMAN_SUPPORT', 'NEW_CLIENT', 'OPT_OUT', 'OTHER']
 
 export async function classifyIntent(message: string): Promise<Intent> {
   if (!OPENAI_API_KEY) {
     const lowered = message.toLowerCase()
+    if (lowered.includes('parar') || lowered.includes('cancelar') || lowered.includes('descadastrar') || lowered.includes('sair') || lowered.includes('stop')) return 'OPT_OUT'
     if (lowered.includes('process') || lowered.includes('andamento') || lowered.includes('status')) return 'PROCESS_STATUS'
     if (lowered.includes('advogado') || lowered.includes('humano') || lowered.includes('atendente')) return 'HUMAN_SUPPORT'
     return 'OTHER'
@@ -16,7 +17,8 @@ export async function classifyIntent(message: string): Promise<Intent> {
 
   const prompt = `Classifique a intenção da mensagem de WhatsApp para escritório jurídico.
 Retorne SOMENTE JSON no formato {"intent":"..."}.
-Intenções permitidas: PROCESS_STATUS, HUMAN_SUPPORT, NEW_CLIENT, OTHER.
+Intenções permitidas: PROCESS_STATUS, HUMAN_SUPPORT, NEW_CLIENT, OPT_OUT, OTHER.
+OPT_OUT: pessoa quer parar de receber notificações (parar, cancelar, descadastrar, stop, não quero mais).
 Mensagem: ${message}`
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {

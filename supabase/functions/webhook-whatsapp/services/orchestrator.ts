@@ -99,6 +99,18 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
       return
     }
 
+    if (intent === 'OPT_OUT') {
+      await ctx.supabase
+        .from('whatsapp_contacts')
+        .update({ notifications_opt_in: false, updated_at: new Date().toISOString() })
+        .eq('tenant_id', ctx.tenantId)
+        .eq('phone_number', ctx.phone)
+
+      const text = 'Entendido. Você não receberá mais notificações automáticas sobre seus processos. Para reativar, entre em contato com o escritório.'
+      await enqueueWhatsAppText(ctx, text, 'orchestrator', `opt_out:${ctx.clienteId}:${ctx.requestId}`)
+      return
+    }
+
     if (intent === 'PROCESS_STATUS') {
       const { data: cliente } = await ctx.supabase
         .from('clientes')
