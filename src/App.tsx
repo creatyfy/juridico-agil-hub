@@ -24,6 +24,7 @@ import NotFound from "./pages/NotFound";
 import Planos from './pages/Planos';
 import Checkout from './pages/Checkout';
 import CheckoutSuccess from './pages/CheckoutSuccess';
+import CampanhasList from './pages/campanhas/CampanhasList';
 
 const queryClient = new QueryClient();
 
@@ -64,6 +65,7 @@ function AppRoutes() {
         <Route path="/clientes" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClientesList /></ProtectedRoute>} />
         <Route path="/clientes/:id" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><ClienteDetail /></ProtectedRoute>} />
         <Route path="/atendimento" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><Atendimento /></ProtectedRoute>} />
+        <Route path="/campanhas" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><CampanhasList /></ProtectedRoute>} />
         <Route path="/configuracoes" element={<ProtectedRoute allowedRoles={['advogado', 'admin']}><Configuracoes /></ProtectedRoute>} />
 
         {/* Admin routes */}

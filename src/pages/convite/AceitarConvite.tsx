@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Scale, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -22,6 +23,7 @@ export default function AceitarConvite() {
   const [registering, setRegistering] = useState(false);
   const [regForm, setRegForm] = useState({ email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
+  const [consentimento, setConsentimento] = useState(false);
 
   useEffect(() => {
     async function fetchInvite() {
@@ -176,7 +178,19 @@ export default function AceitarConvite() {
                 />
               </div>
             </div>
-            <Button className="w-full" onClick={handleRegister} disabled={registering}>
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="consentimento-reg"
+                checked={consentimento}
+                onCheckedChange={(checked) => setConsentimento(checked === true)}
+                className="mt-0.5"
+              />
+              <label htmlFor="consentimento-reg" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
+                Autorizo o recebimento de notificações sobre meus processos e concordo com o tratamento dos meus dados
+                conforme a <strong>LGPD (Lei 13.709/2018)</strong>. O consentimento pode ser revogado a qualquer momento.
+              </label>
+            </div>
+            <Button className="w-full" onClick={handleRegister} disabled={registering || !consentimento}>
               {registering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Cadastrar e Aceitar Convite
             </Button>
@@ -184,9 +198,21 @@ export default function AceitarConvite() {
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground text-center">
-              Você já possui uma conta. Faça login para aceitar o convite.
+              Você já possui uma conta. Confirme o consentimento e aceite o convite.
             </p>
-            <Button className="w-full" onClick={handleAccept} disabled={accepting}>
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="consentimento-accept"
+                checked={consentimento}
+                onCheckedChange={(checked) => setConsentimento(checked === true)}
+                className="mt-0.5"
+              />
+              <label htmlFor="consentimento-accept" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
+                Autorizo o recebimento de notificações sobre meus processos e concordo com o tratamento dos meus dados
+                conforme a <strong>LGPD (Lei 13.709/2018)</strong>. O consentimento pode ser revogado a qualquer momento.
+              </label>
+            </div>
+            <Button className="w-full" onClick={handleAccept} disabled={accepting || !consentimento}>
               {accepting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Aceitar Convite
             </Button>

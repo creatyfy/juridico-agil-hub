@@ -13,6 +13,7 @@ import {
   CreditCard,
   ChevronLeft,
   ChevronRight,
+  Megaphone,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ const advogadoMenu: MenuItem[] = [
   { label: 'Processos', icon: FileText, path: '/processos' },
   { label: 'Clientes', icon: Users, path: '/clientes' },
   { label: 'Atendimento', icon: MessageSquare, path: '/atendimento' },
+  { label: 'Campanhas', icon: Megaphone, path: '/campanhas' },
   { label: 'Configurações', icon: Settings, path: '/configuracoes' },
   { label: 'Planos', icon: CreditCard, path: '/planos' },
 ];
