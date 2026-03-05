@@ -24,7 +24,32 @@ export async function tenantWriteGuard(input: {
     p_resource_table: input.resourceTable,
   })
 
-  if (error) {
-    throw new ForbiddenTenantAccessError(error.message)
+  if (!error) return
+
+  // Fallback: some environments may not have tenant_write_guard yet
+  if (error.message?.includes('Could not find the function public.tenant_write_guard')) {
+    const tenantColumnByTable = {
+      cliente_processos: 'advogado_user_id',
+      convites_vinculacao: 'advogado_user_id',
+      campaign_recipients: 'tenant_id',
+      campaign_jobs: 'tenant_id',
+      message_outbox: 'tenant_id',
+    } as const
+
+    const tenantColumn = tenantColumnByTable[input.resourceTable]
+    const { data: row, error: rowError } = await input.supabase
+      .from(input.resourceTable)
+      .select(`id, ${tenantColumn}`)
+      .eq('id', input.resourceId)
+      .maybeSingle()
+
+    if (rowError || !row) {
+      throw new ForbiddenTenantAccessError(rowError?.message || 'forbidden_tenant_scope')
+    }
+
+    assertTenantScope(row[tenantColumn], input.tenantIdFromContext)
+    return
   }
+
+  throw new ForbiddenTenantAccessError(error.message)
 }
