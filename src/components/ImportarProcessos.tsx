@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Search, Download, Loader2, CheckCircle2, FileText, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import {
@@ -34,6 +35,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
   const navigate = useNavigate();
   const [step, setStep] = useState<'idle' | 'searching' | 'results' | 'importing' | 'done'>('idle');
   const [results, setResults] = useState<JuditProcesso[]>([]);
+  const [alreadyImported, setAlreadyImported] = useState<JuditProcesso[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [manualCnj, setManualCnj] = useState('');
   const [importMode, setImportMode] = useState<'oab' | 'manual'>('oab');
@@ -47,6 +49,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
     setStep('searching');
     setResults([]);
+    setAlreadyImported([]);
     try {
       const data = await searchJuditProcesses(user.oab, user.uf);
       const requestId = data.request_id;
@@ -75,7 +78,34 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           // Judit returns { page_data: [{ response_data: {...} }] }
           const pageData = resultsData?.page_data || resultsData?.data || [];
           const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
-          setResults(processList);
+
+          // Filtrar processos já importados
+          const cnjs = processList.map((p: any) =>
+            p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || ''
+          ).filter(Boolean);
+
+          const { supabase } = await import('@/integrations/supabase/client');
+          const { data: existing } = await supabase
+            .from('processos')
+            .select('numero_cnj')
+            .eq('user_id', user!.id)
+            .in('numero_cnj', cnjs);
+
+          const existingCnjs = new Set((existing || []).map((p: any) => p.numero_cnj));
+
+          const novos = processList.filter((p: any) => {
+            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+            return cnj && !existingCnjs.has(cnj);
+          });
+
+          const jaImportados = processList.filter((p: any) => {
+            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+            return cnj && existingCnjs.has(cnj);
+          });
+
+          setResults(novos);
+          setAlreadyImported(jaImportados);
+          setSelected(new Set(novos.map((_: any, i: number) => i)));
           setStep('results');
           toast.success(`${processList.length} processo(s) encontrado(s)`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -101,6 +131,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
     setStep('searching');
     setResults([]);
+    setAlreadyImported([]);
     try {
       const { data, error } = await import('@/integrations/supabase/client').then(m =>
         m.supabase.functions.invoke('search-processes', {
@@ -132,7 +163,34 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           const resultsData = await getJuditResults(requestId);
           const pageData = resultsData?.page_data || resultsData?.data || [];
           const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
-          setResults(processList);
+
+          // Filtrar processos já importados
+          const cnjs = processList.map((p: any) =>
+            p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || ''
+          ).filter(Boolean);
+
+          const { supabase } = await import('@/integrations/supabase/client');
+          const { data: existing } = await supabase
+            .from('processos')
+            .select('numero_cnj')
+            .eq('user_id', user!.id)
+            .in('numero_cnj', cnjs);
+
+          const existingCnjs = new Set((existing || []).map((p: any) => p.numero_cnj));
+
+          const novos = processList.filter((p: any) => {
+            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+            return cnj && !existingCnjs.has(cnj);
+          });
+
+          const jaImportados = processList.filter((p: any) => {
+            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+            return cnj && existingCnjs.has(cnj);
+          });
+
+          setResults(novos);
+          setAlreadyImported(jaImportados);
+          setSelected(new Set(novos.map((_: any, i: number) => i)));
           setStep('results');
           toast.success(`Processo encontrado`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -148,7 +206,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       toast.error(err.message || 'Erro na busca');
       setStep('idle');
     }
-  }, [manualCnj]);
+  }, [manualCnj, user]);
 
   const handleImport = useCallback(async () => {
     if (selected.size === 0) {
@@ -176,7 +234,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       });
 
       const result = await importProcesses(toImport);
-      toast.success(`${toImport.length} processo(s) importado(s) com sucesso!`);
+      toast.success(`${toImport.length} novo(s) processo(s) importado(s) com sucesso!`);
       const importedId = result?.results?.find((r: any) => r.success)?.id;
       setStep('done');
       if (importedId) {
@@ -218,14 +276,14 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
         <Button
           variant={importMode === 'oab' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setImportMode('oab'); setStep('idle'); setResults([]); }}
+          onClick={() => { setImportMode('oab'); setStep('idle'); setResults([]); setAlreadyImported([]); }}
         >
           Buscar por OAB
         </Button>
         <Button
           variant={importMode === 'manual' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setImportMode('manual'); setStep('idle'); setResults([]); }}
+          onClick={() => { setImportMode('manual'); setStep('idle'); setResults([]); setAlreadyImported([]); }}
         >
           Importar por CNJ
         </Button>
@@ -237,7 +295,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           <Search className="h-10 w-10 mx-auto mb-3 text-muted-foreground/50" />
           <h3 className="text-lg font-semibold">Buscar processos pela OAB</h3>
           <p className="text-sm text-muted-foreground mt-1 mb-4">
-            Consulta automática via API Judit usando sua OAB: <strong>{user?.oab}/{user?.uf}</strong>
+            Consulta automática via API Judit usando sua OAB: <strong>{user?.uf}{user?.oab}</strong>
           </p>
           <Button onClick={handleSearchByOab}>
             <Search className="h-4 w-4 mr-2" />
@@ -277,53 +335,89 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       )}
 
       {/* Results */}
-      {step === 'results' && results.length > 0 && (
+      {step === 'results' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold">{results.length} processo(s) encontrado(s)</h3>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={toggleAll}>
-                {selected.size === results.length ? 'Desmarcar todos' : 'Selecionar todos'}
-              </Button>
-              <Button size="sm" onClick={handleImport} disabled={selected.size === 0}>
-                <Download className="h-4 w-4 mr-2" />
-                Importar {selected.size > 0 ? `(${selected.size})` : ''}
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {results.map((proc, idx) => (
-              <div
-                key={idx}
-                className={`card-elevated p-4 flex items-start gap-3 cursor-pointer transition-colors ${selected.has(idx) ? 'ring-2 ring-primary/50 bg-primary/5' : ''
-                  }`}
-                onClick={() => toggleSelect(idx)}
-              >
-                <Checkbox
-                  checked={selected.has(idx)}
-                  onCheckedChange={() => toggleSelect(idx)}
-                  className="mt-1"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="font-mono text-sm font-semibold">{getCnj(proc)}</p>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
-                  </p>
-                  {(getArea(proc)) && (
-                    <p className="text-xs text-muted-foreground/70 mt-0.5">
-                      {getArea(proc)}
-                    </p>
-                  )}
+          {results.length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">{results.length} novos processos encontrados</h3>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={toggleAll}>
+                    {selected.size === results.length ? 'Desmarcar todos' : 'Selecionar todos'}
+                  </Button>
+                  <Button size="sm" onClick={handleImport} disabled={selected.size === 0}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Importar {selected.size > 0 ? `(${selected.size})` : ''}
+                  </Button>
                 </div>
-                <FileText className="h-5 w-5 text-muted-foreground/30 shrink-0" />
               </div>
-            ))}
-          </div>
+
+              <div className="space-y-2">
+                {results.map((proc, idx) => (
+                  <div
+                    key={idx}
+                    className={`card-elevated p-4 flex items-start gap-3 cursor-pointer transition-colors ${selected.has(idx) ? 'ring-2 ring-primary/50 bg-primary/5' : ''
+                      }`}
+                    onClick={() => toggleSelect(idx)}
+                  >
+                    <Checkbox
+                      checked={selected.has(idx)}
+                      onCheckedChange={() => toggleSelect(idx)}
+                      className="mt-1"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-sm font-semibold">{getCnj(proc)}</p>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
+                      </p>
+                      {(getArea(proc)) && (
+                        <p className="text-xs text-muted-foreground/70 mt-0.5">
+                          {getArea(proc)}
+                        </p>
+                      )}
+                    </div>
+                    <FileText className="h-5 w-5 text-muted-foreground/30 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {results.length === 0 && alreadyImported.length > 0 && (
+            <div className="card-elevated p-12 text-center">
+              <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
+              <h3 className="text-lg font-semibold text-muted-foreground">✅ Todos os seus processos já estão cadastrados no sistema.</h3>
+            </div>
+          )}
+
+          {alreadyImported.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{alreadyImported.length} processos já cadastrados</h3>
+              {alreadyImported.map((proc, idx) => (
+                <div
+                  key={`imported-${idx}`}
+                  className="card-elevated p-4 flex items-start gap-3 bg-muted/20"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-mono text-sm font-semibold text-muted-foreground">{getCnj(proc)}</p>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
+                    </p>
+                    {(getArea(proc)) && (
+                      <p className="text-xs text-muted-foreground/70 mt-0.5">
+                        {getArea(proc)}
+                      </p>
+                    )}
+                  </div>
+                  <Badge variant="secondary">Já importado</Badge>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {step === 'results' && results.length === 0 && (
+      {step === 'results' && results.length === 0 && alreadyImported.length === 0 && (
         <div className="card-elevated p-12 text-center">
           <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
           <h3 className="text-lg font-semibold text-muted-foreground">Nenhum processo encontrado</h3>
@@ -347,7 +441,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
             As movimentações serão monitoradas automaticamente.
           </p>
           <div className="flex gap-2 justify-center">
-            <Button variant="outline" onClick={() => { setStep('idle'); setResults([]); setSelected(new Set()); }}>
+            <Button variant="outline" onClick={() => { setStep('idle'); setResults([]); setAlreadyImported([]); setSelected(new Set()); }}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Buscar mais
             </Button>
