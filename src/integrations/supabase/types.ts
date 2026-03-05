@@ -861,7 +861,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
