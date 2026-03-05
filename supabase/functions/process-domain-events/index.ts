@@ -1,7 +1,7 @@
 // @ts-nocheck - Deno edge function
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { buildIdempotencyKey } from '../_shared/outbox.ts'
-import { explainMovement } from '../webhook-whatsapp/services/ai.ts'
+import { explainMovement } from '../_shared/ai-explain.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
