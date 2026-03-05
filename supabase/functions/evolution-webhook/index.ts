@@ -175,8 +175,14 @@ Deno.serve(async (req) => {
     })
   }
 
+  // Allow bypassing HMAC for development/testing
+  const skipHmac = Deno.env.get('EVOLUTION_SKIP_HMAC') === 'true'
+  if (skipHmac) {
+    console.warn('[evolution-webhook] HMAC validation skipped (EVOLUTION_SKIP_HMAC=true)')
+  }
+
   const webhookSecret = Deno.env.get('EVOLUTION_WEBHOOK_HMAC_SECRET') ?? Deno.env.get('WEBHOOK_HMAC_SECRET')
-  if (!webhookSecret) {
+  if (!webhookSecret && !skipHmac) {
     await persistWebhookFailure({
       svc,
       source: 'evolution-webhook',
@@ -195,89 +201,91 @@ Deno.serve(async (req) => {
     })
   }
 
-  const timestamp = parseTimestamp(req.headers.get('x-webhook-timestamp'))
-  const nonce = req.headers.get('x-webhook-nonce')
-  const incomingSignature = req.headers.get('x-webhook-signature')
+  if (!skipHmac) {
+    const timestamp = parseTimestamp(req.headers.get('x-webhook-timestamp'))
+    const nonce = req.headers.get('x-webhook-nonce')
+    const incomingSignature = req.headers.get('x-webhook-signature')
 
-  if (!timestamp || !nonce || !incomingSignature) {
-    await persistWebhookFailure({
-      svc,
-      source: 'evolution-webhook',
-      correlationId,
-      tenantId,
-      eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
-      instanceName: instanceId,
-      httpStatus: 401,
-      errorMessage: 'missing_hmac_headers',
-      payload,
-    })
+    if (!timestamp || !nonce || !incomingSignature) {
+      await persistWebhookFailure({
+        svc,
+        source: 'evolution-webhook',
+        correlationId,
+        tenantId,
+        eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
+        instanceName: instanceId,
+        httpStatus: 401,
+        errorMessage: 'missing_hmac_headers',
+        payload,
+      })
 
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'missing_hmac_headers' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+      return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'missing_hmac_headers' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
 
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  if (Math.abs(nowSeconds - timestamp) > SIGNATURE_DRIFT_SECONDS) {
-    await persistWebhookFailure({
-      svc,
-      source: 'evolution-webhook',
-      correlationId,
-      tenantId,
-      eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
-      instanceName: instanceId,
-      httpStatus: 401,
-      errorMessage: 'timestamp_out_of_range',
-      payload,
-    })
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    if (Math.abs(nowSeconds - timestamp) > SIGNATURE_DRIFT_SECONDS) {
+      await persistWebhookFailure({
+        svc,
+        source: 'evolution-webhook',
+        correlationId,
+        tenantId,
+        eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
+        instanceName: instanceId,
+        httpStatus: 401,
+        errorMessage: 'timestamp_out_of_range',
+        payload,
+      })
 
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'timestamp_out_of_range' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+      return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'timestamp_out_of_range' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
 
-  const signedPayload = `${timestamp}.${nonce}.${instanceId}.${rawBody}`
-  const expectedSignature = await computeHmacSha256(webhookSecret, signedPayload)
+    const signedPayload = `${timestamp}.${nonce}.${instanceId}.${rawBody}`
+    const expectedSignature = await computeHmacSha256(webhookSecret!, signedPayload)
 
-  if (!timingSafeEqual(expectedSignature, incomingSignature)) {
-    await persistWebhookFailure({
-      svc,
-      source: 'evolution-webhook',
-      correlationId,
-      tenantId,
-      eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
-      instanceName: instanceId,
-      httpStatus: 401,
-      errorMessage: 'invalid_signature',
-      payload,
-    })
+    if (!timingSafeEqual(expectedSignature, incomingSignature)) {
+      await persistWebhookFailure({
+        svc,
+        source: 'evolution-webhook',
+        correlationId,
+        tenantId,
+        eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
+        instanceName: instanceId,
+        httpStatus: 401,
+        errorMessage: 'invalid_signature',
+        payload,
+      })
 
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'invalid_signature' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+      return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'invalid_signature' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
 
-  const nonceReserved = await reserveReplayNonce(svc, `${tenantId}:${instanceId}:${nonce}`)
-  if (!nonceReserved) {
-    await persistWebhookFailure({
-      svc,
-      source: 'evolution-webhook',
-      correlationId,
-      tenantId,
-      eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
-      instanceName: instanceId,
-      httpStatus: 409,
-      errorMessage: 'replay_detected',
-      payload,
-    })
+    const nonceReserved = await reserveReplayNonce(svc, `${tenantId}:${instanceId}:${nonce}`)
+    if (!nonceReserved) {
+      await persistWebhookFailure({
+        svc,
+        source: 'evolution-webhook',
+        correlationId,
+        tenantId,
+        eventName: String(payload?.event ?? payload?.type ?? 'unknown'),
+        instanceName: instanceId,
+        httpStatus: 409,
+        errorMessage: 'replay_detected',
+        payload,
+      })
 
-    return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'replay_detected' }), {
-      status: 409,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+      return new Response(JSON.stringify({ ok: false, correlation_id: correlationId, error: 'replay_detected' }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
   }
 
 

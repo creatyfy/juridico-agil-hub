@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from '@/hooks/use-toast';
 
 export type ConnectionStatus = 'not_configured' | 'disconnected' | 'connecting' | 'connected' | 'loading';
 
@@ -14,6 +15,7 @@ export interface ChatItem {
   direcao: string;
   nao_lidas: number;
   is_group: boolean;
+  ai_paused?: boolean;
 }
 
 export interface Message {
@@ -67,8 +69,15 @@ export function useWhatsApp() {
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [aiPausedChats, setAiPausedChats] = useState<Set<string>>(new Set());
   const selectedChatRef = useRef<string | null>(null);
   const syncedRef = useRef(false);
+  const lastPollRef = useRef<string | null>(null);
+
+  // Keep selectedChatRef in sync
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -123,7 +132,6 @@ export function useWhatsApp() {
     }
   }, []);
 
-  // Full sync: contacts + chats + photos (once per session)
   const runFullSync = useCallback(async () => {
     if (syncedRef.current) return;
     setSyncing(true);
@@ -137,7 +145,6 @@ export function useWhatsApp() {
     }
   }, []);
 
-  // Load chats from cache table
   const loadChats = useCallback(async () => {
     const { data, error } = await supabase
       .from('whatsapp_chats_cache')
@@ -168,7 +175,6 @@ export function useWhatsApp() {
     try {
       const res = await callEvolution('fetch-messages', { remoteJid });
       setMessages(res.messages || []);
-      // Update local unread count
       setChats(prev => prev.map(c =>
         c.remote_jid === remoteJid ? { ...c, nao_lidas: 0 } : c
       ));
@@ -189,7 +195,6 @@ export function useWhatsApp() {
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
-    // Update chat list immediately
     setChats(prev => {
       const updated = prev.map(c =>
         c.remote_jid === number
@@ -207,12 +212,21 @@ export function useWhatsApp() {
     }
   }, []);
 
+  const toggleAiPause = useCallback((remoteJid: string) => {
+    setAiPausedChats(prev => {
+      const next = new Set(prev);
+      if (next.has(remoteJid)) next.delete(remoteJid);
+      else next.add(remoteJid);
+      return next;
+    });
+  }, []);
+
   // Check status on mount
   useEffect(() => {
     if (user) checkStatus();
   }, [user, checkStatus]);
 
-  // Realtime: instance connection status (works regardless of local status state)
+  // Realtime: instance connection status
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -235,7 +249,7 @@ export function useWhatsApp() {
     return () => { supabase.removeChannel(channel); };
   }, [user]);
 
-  // Webhook healthcheck: re-register every 5 min while connected to survive Evolution restarts
+  // Webhook healthcheck
   useEffect(() => {
     if (status !== 'connected') return;
     const interval = setInterval(() => {
@@ -254,7 +268,7 @@ export function useWhatsApp() {
     return () => clearInterval(interval);
   }, [status, checkStatus, refreshQrCode]);
 
-  // Run full sync when connected, then load chats
+  // Run full sync when connected
   useEffect(() => {
     if (status === 'connected') {
       runFullSync().then(() => loadChats());
@@ -272,7 +286,6 @@ export function useWhatsApp() {
         schema: 'public',
         table: 'whatsapp_chats_cache',
       }, () => {
-        // Reload chats on any change
         loadChats();
       })
       .on('postgres_changes', {
@@ -282,6 +295,17 @@ export function useWhatsApp() {
       }, (payload) => {
         const newMsg = payload.new as any;
         const currentChat = selectedChatRef.current;
+
+        // Toast for messages in other conversations
+        if (newMsg.direcao === 'in' && (!currentChat || newMsg.remote_jid !== currentChat)) {
+          const chatName = chats.find(c => c.remote_jid === newMsg.remote_jid)?.nome
+            || newMsg.remote_jid.replace('@s.whatsapp.net', '');
+          toast({
+            title: `💬 ${chatName}`,
+            description: (newMsg.conteudo || '[mídia]').slice(0, 80),
+          });
+        }
+
         if (currentChat && newMsg.remote_jid === currentChat) {
           setMessages(prev => {
             if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) return prev;
@@ -322,10 +346,38 @@ export function useWhatsApp() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [status, loadChats]);
+  }, [status, loadChats, chats]);
+
+  // Polling fallback every 30s for active conversation
+  useEffect(() => {
+    if (status !== 'connected') return;
+
+    const interval = setInterval(async () => {
+      const currentChat = selectedChatRef.current;
+      if (!currentChat) return;
+
+      try {
+        const res = await callEvolution('fetch-messages', { remoteJid: currentChat });
+        const fetched: Message[] = res.messages || [];
+        if (fetched.length === 0) return;
+
+        setMessages(prev => {
+          const existingIds = new Set(prev.map(m => m.message_id).filter(Boolean));
+          const newOnes = fetched.filter(m => m.message_id && !existingIds.has(m.message_id));
+          if (newOnes.length === 0) return prev;
+          return [...prev, ...newOnes];
+        });
+      } catch {
+        // Silent fallback
+      }
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [status]);
 
   return {
-    status, qrCode, chats, messages, selectedChat, loading, syncing,
-    connect, disconnect, refreshQrCode, loadChats, loadMessages, sendMessage, checkStatus, setSelectedChat,
+    status, qrCode, chats, messages, selectedChat, loading, syncing, aiPausedChats,
+    connect, disconnect, refreshQrCode, loadChats, loadMessages, sendMessage,
+    checkStatus, setSelectedChat, toggleAiPause,
   };
 }
