@@ -66,12 +66,16 @@ function ChatListItem({ chat, isSelected, onSelect, hasNewMessage }: { chat: Cha
   return (
     <button
       onClick={onSelect}
-      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors text-left border-b border-border/30 relative ${
-        isSelected ? 'bg-accent' : ''
+      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-[#f0f2f5] dark:hover:bg-zinc-800 transition-colors text-left border-b border-border/20 relative ${
+        isSelected ? 'bg-[#f0f2f5] dark:bg-zinc-800' : ''
       } ${hasNewMessage && !isSelected ? 'animate-pulse' : ''}`}
     >
       <Avatar className="h-12 w-12 shrink-0">
-        {chat.foto_url && <AvatarImage src={chat.foto_url} alt={chat.nome} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />}
+        <AvatarImage 
+          src={chat.foto_url ?? undefined} 
+          alt={chat.nome}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
         <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
           {chat.nome.substring(0, 2).toUpperCase()}
         </AvatarFallback>
@@ -120,8 +124,8 @@ function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchC
   );
 
   return (
-    <div className="flex flex-col h-full border-r">
-      <div className="p-3 border-b bg-card space-y-2">
+    <div className="flex flex-col h-full border-r bg-white dark:bg-zinc-900">
+      <div className="p-3 border-b bg-white dark:bg-zinc-900 space-y-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -186,11 +190,11 @@ function MessageBubble({ msg }: { msg: Message }) {
     <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
         isOut
-          ? 'bg-primary text-primary-foreground rounded-br-none'
-          : 'bg-card border border-border rounded-bl-none'
+          ? 'bg-[#dcf8c6] dark:bg-emerald-800 text-black dark:text-white rounded-br-none'
+          : 'bg-white border border-border shadow-sm rounded-bl-none'
       }`}>
         <p className="whitespace-pre-wrap break-words">{msg.conteudo || '[mídia]'}</p>
-        <p className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${isOut ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+        <p className={`text-[10px] mt-1 text-right flex items-center justify-end gap-1 ${isOut ? 'text-black/60 dark:text-white/70' : 'text-muted-foreground'}`}>
           {format(new Date(msg.timestamp), 'HH:mm')}
           {isOut && <DeliveryTick status={msg.status_entrega} />}
         </p>
@@ -236,7 +240,7 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onT
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 p-3 border-b bg-card">
+      <div className="flex items-center gap-3 p-3 border-b bg-white dark:bg-zinc-900 shadow-sm">
         <Button variant="ghost" size="icon" className="md:hidden shrink-0" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -272,7 +276,7 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onT
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-3 sm:p-4">
+      <ScrollArea className="flex-1 p-3 sm:p-4 bg-[#efeae2] dark:bg-zinc-800" style={{ backgroundImage: "radial-gradient(rgba(0,0,0,0.03) 0.8px, transparent 0.8px)", backgroundSize: "14px 14px" }}>
         <div className="space-y-2 max-w-2xl mx-auto">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground text-sm py-8">
@@ -294,7 +298,7 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onT
       </ScrollArea>
 
       {/* Input */}
-      <div className="relative p-2 sm:p-3 border-t bg-card">
+      <div className="relative p-3 sm:p-4 border-t bg-white dark:bg-zinc-900">
         {showEmoji && (
           <div ref={emojiRef} className="absolute bottom-full left-0 mb-2 z-50">
             <EmojiPicker
@@ -317,9 +321,9 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onT
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            className="flex-1"
+            className="flex-1 rounded-full px-4 py-2.5 bg-white dark:bg-zinc-800"
           />
-          <Button onClick={handleSend} size="icon" className="shrink-0" disabled={!text.trim()}>
+          <Button onClick={handleSend} size="icon" className="shrink-0 rounded-full" disabled={!text.trim()}>
             <Send className="h-4 w-4" />
           </Button>
         </div>
