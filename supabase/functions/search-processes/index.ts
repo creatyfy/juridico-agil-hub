@@ -30,8 +30,8 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error('Unauthorized');
 
-    const { data: tenantApiKey, error: keyError } = await supabase.rpc('get_tenant_judit_api_key');
-    if (keyError || !tenantApiKey) throw new Error('Judit API key not configured for tenant');
+    const tenantApiKey = Deno.env.get('JUDIT_API_KEY');
+    if (!tenantApiKey) throw new Error('JUDIT_API_KEY not configured in secrets');
 
     const parsed = requestSchema.safeParse(await req.json());
     if (!parsed.success) throw new Error(JSON.stringify(parsed.error.flatten()));
