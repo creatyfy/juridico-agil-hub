@@ -85,7 +85,9 @@ export function useWhatsApp() {
   const [syncing, setSyncing] = useState(false);
   const [aiPausedChats, setAiPausedChats] = useState<Set<string>>(new Set());
   const selectedChatRef = useRef<string | null>(null);
-  const syncedRef = useRef(false);
+  const syncedRef = useRef(
+    typeof window !== 'undefined' ? sessionStorage.getItem('whatsapp_synced') === 'true' : false
+  );
   const lastPollRef = useRef<string | null>(null);
   const statusFailureCountRef = useRef(0);
 
@@ -160,6 +162,7 @@ export function useWhatsApp() {
       setMessages([]);
       setSelectedChat(null);
       syncedRef.current = false;
+      try { sessionStorage.removeItem('whatsapp_synced'); } catch {}
     } finally {
       setLoading(false);
     }
@@ -171,6 +174,7 @@ export function useWhatsApp() {
     try {
       await callEvolution('full-sync', undefined, {});
       syncedRef.current = true;
+      try { sessionStorage.setItem('whatsapp_synced', 'true'); } catch {}
     } catch (e) {
       console.error('Full sync error:', e);
     } finally {

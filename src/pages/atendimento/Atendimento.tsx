@@ -71,7 +71,7 @@ function ChatListItem({ chat, isSelected, onSelect, hasNewMessage }: { chat: Cha
       } ${hasNewMessage && !isSelected ? 'animate-pulse' : ''}`}
     >
       <Avatar className="h-12 w-12 shrink-0">
-        {chat.foto_url && <AvatarImage src={chat.foto_url} alt={chat.nome} />}
+        {chat.foto_url && <AvatarImage src={chat.foto_url} alt={chat.nome} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />}
         <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
           {chat.nome.substring(0, 2).toUpperCase()}
         </AvatarFallback>
@@ -241,7 +241,7 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onT
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <Avatar className="h-10 w-10 shrink-0">
-          {contact?.foto_url && <AvatarImage src={contact.foto_url} alt={contact.nome} />}
+          {contact?.foto_url && <AvatarImage src={contact.foto_url} alt={contact?.nome || '?'} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />}
           <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
             {(contact?.nome || '?').substring(0, 2).toUpperCase()}
           </AvatarFallback>

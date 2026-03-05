@@ -861,6 +861,30 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_campaign_recipients: {
+        Args: { p_batch_size?: number; p_campaign_job_id: string }
+        Returns: {
+          attempts: number
+          campaign_job_id: string
+          created_at: string
+          destination: string
+          id: string
+          last_error: string | null
+          outbox_id: string | null
+          payload: Json
+          reference: string
+          sent_at: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "campaign_recipients"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
     }
     Enums: {
