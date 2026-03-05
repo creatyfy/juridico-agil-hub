@@ -262,6 +262,7 @@ export function useWhatsApp() {
   // Realtime: instance connection status
   useEffect(() => {
     if (!user) return;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const channel = supabase
       .channel('whatsapp-instance-status')
       .on('postgres_changes', {
@@ -273,16 +274,25 @@ export function useWhatsApp() {
         if (inst.status === 'connected') {
           statusFailureCountRef.current = 0;
           setStatus('connected');
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         } else if (inst.status === 'connecting') {
           statusFailureCountRef.current = 0;
           setStatus('connecting');
         } else {
           setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
+          // Auto-retry after 10s to detect reconnection
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            checkStatus().catch(() => {});
+          }, 10_000);
         }
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [user]);
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [user, checkStatus]);
 
   // Webhook healthcheck
   useEffect(() => {
@@ -293,12 +303,12 @@ export function useWhatsApp() {
     return () => clearInterval(interval);
   }, [status]);
 
-  // Poll status periodically while connected to self-heal stale UI state
+  // Poll status periodically while connected to self-heal stale UI state (every 60s)
   useEffect(() => {
     if (status !== 'connected') return;
     const interval = setInterval(() => {
       checkStatus().catch(() => {});
-    }, 45_000);
+    }, 60_000);
     return () => clearInterval(interval);
   }, [status, checkStatus]);
 

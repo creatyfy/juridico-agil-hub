@@ -612,6 +612,14 @@ Deno.serve(async (req) => {
 
     // ─── SEND ───
     if (action === 'send') {
+      // Validate Evolution API configuration
+      if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
+        console.error('SEND ERROR: EVOLUTION_API_URL or EVOLUTION_API_KEY not configured')
+        return new Response(JSON.stringify({ success: false, error: 'evolution_not_configured' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
       const instance = await getUserInstance()
       if (!instance) {
         return new Response(JSON.stringify({ error: 'No instance' }), {
@@ -639,9 +647,17 @@ Deno.serve(async (req) => {
           body: JSON.stringify({ number: cleanNumber, text }),
         })
 
-        const evoData = await evoRes.json().catch(() => ({}))
+        const evoRawBody = await evoRes.text()
+        let evoData: any = {}
+        try { evoData = JSON.parse(evoRawBody) } catch { evoData = {} }
 
         if (!evoRes.ok) {
+          console.error(`SEND ERROR: Evolution API returned ${evoRes.status}`, {
+            instance: instance.instance_name,
+            number: cleanNumber,
+            status: evoRes.status,
+            body: evoRawBody,
+          })
           const errMsg = evoData?.error || evoData?.message || `Evolution returned ${evoRes.status}`
           return new Response(JSON.stringify({ success: false, error: errMsg }), {
             status: evoRes.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -658,7 +674,7 @@ Deno.serve(async (req) => {
           conteudo: text,
           tipo: 'text',
           message_id: providerMessageId,
-        }).then(({ error }) => { if (error) console.error('Persist sent msg error:', error) })
+        }).then(({ error }: any) => { if (error) console.error('Persist sent msg error:', error) })
 
         // Update chat cache (fire-and-forget)
         svc.from('whatsapp_chats_cache').upsert({
@@ -668,7 +684,7 @@ Deno.serve(async (req) => {
           ultimo_timestamp: new Date().toISOString(),
           direcao: 'out',
         }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
-          .then(({ error }) => { if (error) console.error('Update chat cache error:', error) })
+          .then(({ error }: any) => { if (error) console.error('Update chat cache error:', error) })
 
         return new Response(JSON.stringify({
           success: true,
@@ -677,6 +693,7 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       } catch (e: any) {
+        console.error('SEND ERROR: Exception calling Evolution API', { error: e.message, stack: e.stack })
         return new Response(JSON.stringify({ success: false, error: e.message || 'Falha ao enviar mensagem' }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
