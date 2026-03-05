@@ -641,11 +641,11 @@ Deno.serve(async (req) => {
       const cleanNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@lid', '')
 
       try {
-        // Evolution API v2 expects the full remoteJid as 'number'
+        // Evolution API expects clean number digits (no JID suffix)
         const evoRes = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY },
-          body: JSON.stringify({ number: remoteJid, text }),
+          body: JSON.stringify({ number: cleanNumber, text }),
         })
 
         const evoRawBody = await evoRes.text()
