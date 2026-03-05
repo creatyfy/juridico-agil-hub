@@ -121,18 +121,26 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
     }
   }
 
-  const { data: allowedToken, error: tokenError } = await input.supabase.rpc('consume_token', {
-    p_tenant_id: input.tenantId,
-    p_instance_id: connectedInstance.id,
-    p_amount: 1,
-  })
+  // Token bucket rate-limiting (optional — function may not exist yet)
+  try {
+    const { data: allowedToken, error: tokenError } = await input.supabase.rpc('consume_token', {
+      p_tenant_id: input.tenantId,
+      p_instance_id: connectedInstance.id,
+      p_amount: 1,
+    })
 
-  if (tokenError) {
-    return { ok: false, status: 'error', idempotencyKey, reason: tokenError.message }
-  }
-
-  if (!allowedToken) {
-    return { ok: false, status: 'rate_limited', idempotencyKey, reason: 'tenant_instance_token_bucket_exhausted' }
+    if (tokenError) {
+      // If the function doesn't exist, skip rate-limiting gracefully
+      if (tokenError.message?.includes('Could not find the function')) {
+        console.warn('consume_token not available, skipping rate-limit check')
+      } else {
+        return { ok: false, status: 'error', idempotencyKey, reason: tokenError.message }
+      }
+    } else if (allowedToken === false) {
+      return { ok: false, status: 'rate_limited', idempotencyKey, reason: 'tenant_instance_token_bucket_exhausted' }
+    }
+  } catch (e) {
+    console.warn('consume_token call failed, skipping:', String(e))
   }
 
   const outboxRow = {
