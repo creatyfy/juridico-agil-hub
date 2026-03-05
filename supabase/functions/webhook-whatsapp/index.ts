@@ -80,6 +80,31 @@ Deno.serve(async (req) => {
 
     if (!instance) return jsonResponse({ ok: true, correlation_id: correlationId })
 
+    // Handle connection updates from Evolution API
+    if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
+      const payload = Array.isArray(body.data) ? body.data[0] : (body.data || {})
+      const rawState = String(payload?.state || payload?.connection || payload?.status || '').toLowerCase()
+      const mappedStatus = rawState === 'open' || rawState === 'connected'
+        ? 'connected'
+        : rawState === 'connecting' || rawState === 'qr'
+          ? 'connecting'
+          : 'disconnected'
+
+      const rawPhone = payload?.number || payload?.phone || payload?.me?.id || null
+      const normalizedPhone = rawPhone ? normalizePhone(String(rawPhone)) : null
+
+      await supabase
+        .from('whatsapp_instancias')
+        .update({
+          status: mappedStatus,
+          phone_number: normalizedPhone,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', instance.id)
+
+      return jsonResponse({ ok: true, correlation_id: correlationId, status: mappedStatus })
+    }
+
     // Handle delivery status updates from Evolution API
     if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
       const items = Array.isArray(body.data) ? body.data : body.data ? [body.data] : []

@@ -547,20 +547,48 @@ Deno.serve(async (req) => {
         })
       }
 
-      const evoRes = await fetch(
-        `${EVOLUTION_API_URL}/instance/connectionState/${instance.instance_name}`,
-        { headers: evoHeaders() }
-      )
-      const evoData = await evoRes.json()
-      const state = evoData.instance?.state || 'close'
-      const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
-      await supabase.from('whatsapp_instancias')
-        .update({ status: newStatus })
-        .eq('id', instance.id)
+      const cachedStatus = instance.status || 'disconnected'
 
-      return new Response(JSON.stringify({
-        status: newStatus, instance: instance.instance_name, phone: instance.phone_number,
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      try {
+        const evoRes = await fetch(
+          `${EVOLUTION_API_URL}/instance/connectionState/${instance.instance_name}`,
+          { headers: evoHeaders(), signal: AbortSignal.timeout(8000) }
+        )
+
+        if (!evoRes.ok) {
+          const providerMessage = await parseEvolutionError(evoRes)
+          console.warn('status_provider_unavailable', { instance: instance.instance_name, provider_message: providerMessage })
+          return new Response(JSON.stringify({
+            status: cachedStatus,
+            instance: instance.instance_name,
+            phone: instance.phone_number,
+            source: 'cache',
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
+
+        const evoData = await evoRes.json().catch(() => ({}))
+        const state = evoData?.instance?.state || evoData?.state || 'close'
+        const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
+
+        await supabase.from('whatsapp_instancias')
+          .update({ status: newStatus, updated_at: new Date().toISOString() })
+          .eq('id', instance.id)
+
+        return new Response(JSON.stringify({
+          status: newStatus,
+          instance: instance.instance_name,
+          phone: instance.phone_number,
+          source: 'provider',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      } catch (error) {
+        console.warn('status_provider_timeout', { instance: instance.instance_name, error: String(error) })
+        return new Response(JSON.stringify({
+          status: cachedStatus,
+          instance: instance.instance_name,
+          phone: instance.phone_number,
+          source: 'cache',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
     }
 
     // ─── QRCODE ───
