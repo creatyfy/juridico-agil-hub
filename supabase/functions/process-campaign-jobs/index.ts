@@ -63,8 +63,10 @@ Deno.serve(async (req) => {
   }
 
   const { data: jobs, error: jobsError } = await jobsQuery
+  console.log(`[campaign] Found ${jobs?.length ?? 0} jobs, filter: campaign_job_id=${body.campaign_job_id ?? 'all'}`)
 
   if (jobsError) {
+    console.error('[campaign] jobsError:', jobsError.message)
     return new Response(JSON.stringify({ error: jobsError.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -83,7 +85,10 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: true })
       .limit(BATCH_SIZE)
 
+    console.log(`[campaign] Job ${job.id}: ${recipients?.length ?? 0} recipients to process`)
+
     if (recipientsError) {
+      console.error(`[campaign] recipientsError for job ${job.id}:`, recipientsError.message)
       processed.push({ campaign_job_id: job.id, status: 'recipients_query_error', error: recipientsError.message })
       continue
     }
@@ -133,6 +138,7 @@ Deno.serve(async (req) => {
       try { evoData = JSON.parse(evoRawBody) } catch { evoData = {} }
 
       if (!evoRes.ok) {
+        console.error(`[campaign] Evolution API error for ${recipient.id}: HTTP ${evoRes.status}`, evoRawBody)
         await svc.from('campaign_recipients')
           .update({
             status: 'failed',
@@ -183,6 +189,7 @@ Deno.serve(async (req) => {
         direcao: 'out',
       }, { onConflict: 'instancia_id,remote_jid', ignoreDuplicates: false })
 
+      console.log(`[campaign] Sent to ${destinationNumber} via ${instanceName}, msgId=${providerMessageId}`)
       processed.push({ recipient_id: recipient.id, status: 'sent' })
     }
   }
