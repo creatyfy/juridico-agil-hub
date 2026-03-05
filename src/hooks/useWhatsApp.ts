@@ -62,7 +62,21 @@ function callEvolution(action: string, params?: Record<string, string>, body?: a
 
 export function useWhatsApp() {
   const { user } = useAuth();
-  const [status, setStatus] = useState<ConnectionStatus>('loading');
+
+  // Recover cached status from sessionStorage to survive navigation
+  const cachedStatus = (typeof window !== 'undefined'
+    ? sessionStorage.getItem('whatsapp_status') as ConnectionStatus | null
+    : null) || 'loading';
+
+  const [status, setStatusRaw] = useState<ConnectionStatus>(cachedStatus);
+  const setStatus: typeof setStatusRaw = (val) => {
+    setStatusRaw((prev) => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { sessionStorage.setItem('whatsapp_status', next); } catch {}
+      return next;
+    });
+  };
+
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
