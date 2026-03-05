@@ -96,6 +96,31 @@ export function useWhatsApp() {
     selectedChatRef.current = selectedChat;
   }, [selectedChat]);
 
+  const playNotificationSound = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.2);
+      setTimeout(() => ctx.close(), 300);
+    } catch {
+      // no-op
+    }
+  }, []);
+
   const checkStatus = useCallback(async () => {
     try {
       const res = await callEvolution('status');
@@ -354,13 +379,16 @@ export function useWhatsApp() {
         const newMsg = payload.new as any;
         const currentChat = selectedChatRef.current;
 
-        // Toast for messages in other conversations
-        if (newMsg.direcao === 'in' && (!currentChat || newMsg.remote_jid !== currentChat)) {
+        if (newMsg.direcao === 'in') {
           const chatName = chats.find(c => c.remote_jid === newMsg.remote_jid)?.nome
             || newMsg.remote_jid.replace('@s.whatsapp.net', '');
+          const preview = (newMsg.conteudo || '[mídia]').slice(0, 80);
+
+          playNotificationSound();
+
           toast({
             title: `💬 ${chatName}`,
-            description: (newMsg.conteudo || '[mídia]').slice(0, 80),
+            description: preview,
           });
         }
 
@@ -404,9 +432,9 @@ export function useWhatsApp() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [status, loadChats, chats]);
+  }, [status, loadChats, chats, playNotificationSound]);
 
-  // Polling fallback every 30s for active conversation
+  // Polling fallback every 10s for active conversation
   useEffect(() => {
     if (status !== 'connected') return;
 
@@ -428,7 +456,7 @@ export function useWhatsApp() {
       } catch {
         // Silent fallback
       }
-    }, 30_000);
+    }, 10_000);
 
     return () => clearInterval(interval);
   }, [status]);

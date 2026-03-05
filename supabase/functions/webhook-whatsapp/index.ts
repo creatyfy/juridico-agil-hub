@@ -90,7 +90,13 @@ Deno.serve(async (req) => {
           ? 'connecting'
           : 'disconnected'
 
-      const rawPhone = payload?.number || payload?.phone || payload?.me?.id || null
+      const rawPhone = payload?.number
+        || payload?.phone
+        || payload?.me?.id
+        || payload?.me?.user
+        || payload?.wuid
+        || payload?.jid
+        || null
       const normalizedPhone = rawPhone ? normalizePhone(String(rawPhone)) : null
 
       await supabase
@@ -101,6 +107,32 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
         .eq('id', instance.id)
+
+      if (mappedStatus === 'connected' && !normalizedPhone) {
+        try {
+          const evoRes = await fetch(`${Deno.env.get('EVOLUTION_API_URL')}/instance/fetchInstances`, {
+            headers: { 'apikey': Deno.env.get('EVOLUTION_API_KEY')! },
+          })
+          const instances = await evoRes.json()
+          const inst = Array.isArray(instances)
+            ? instances.find((i: any) => i.instance?.instanceName === instanceName)
+            : null
+          const phone = inst?.instance?.owner || inst?.instance?.wuid || inst?.owner || null
+
+          if (phone) {
+            await supabase
+              .from('whatsapp_instancias')
+              .update({ phone_number: String(phone).replace('@s.whatsapp.net', '').replace(/\D/g, '') })
+              .eq('id', instance.id)
+          }
+        } catch (error) {
+          logError('connection_update_phone_fallback_failed', {
+            correlation_id: correlationId,
+            instance_name: instanceName,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
 
       return jsonResponse({ ok: true, correlation_id: correlationId, status: mappedStatus })
     }

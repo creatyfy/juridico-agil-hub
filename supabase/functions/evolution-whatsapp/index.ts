@@ -267,6 +267,44 @@ Deno.serve(async (req) => {
         else console.log('Chats cached:', chatsToSave.length)
       }
 
+      // ── Step 7: Background profile picture backfill for chats/contacts still without photo ──
+      const missingPhotoJids = chatsToSave
+        .filter((chat: any) => !chat.foto_url && chat.remote_jid && !chat.remote_jid.includes('@g.us') && chat.remote_jid !== 'status@broadcast')
+        .map((chat: any) => chat.remote_jid)
+        .slice(0, 60)
+
+      if (missingPhotoJids.length > 0) {
+        ;(async () => {
+          for (let i = 0; i < missingPhotoJids.length; i += 10) {
+            const batch = missingPhotoJids.slice(i, i + 10)
+            await Promise.all(batch.map(async (jid: string) => {
+              try {
+                const res = await fetch(`${EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instanceName}`, {
+                  method: 'POST',
+                  headers: evoHeaders(),
+                  body: JSON.stringify({ number: jid }),
+                })
+                const data = await res.json()
+                const picUrl = data?.profilePictureUrl || data?.picture || data?.imgUrl
+                if (!picUrl) return
+
+                await svc.from('whatsapp_contatos')
+                  .update({ foto_url: picUrl })
+                  .eq('instancia_id', instanceId)
+                  .eq('remote_jid', jid)
+
+                await svc.from('whatsapp_chats_cache')
+                  .update({ foto_url: picUrl })
+                  .eq('instancia_id', instanceId)
+                  .eq('remote_jid', jid)
+              } catch (error) {
+                console.error('Background pic fetch error:', jid, error)
+              }
+            }))
+          }
+        })()
+      }
+
       return new Response(JSON.stringify({
         ok: true,
         contacts_synced: contactsToSave.length,
@@ -638,7 +676,7 @@ Deno.serve(async (req) => {
       // Send directly via Evolution API for manual chat (no outbox overhead)
       const svc = getServiceSupabase()
       const remoteJid = number.includes('@') ? number : `${number.replace(/\D/g, '')}@s.whatsapp.net`
-      const cleanNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@lid', '')
+      const cleanNumber = remoteJid.replace('@s.whatsapp.net', '')
 
       try {
         // Evolution API expects clean number digits (no JID suffix)
@@ -659,6 +697,7 @@ Deno.serve(async (req) => {
             status: evoRes.status,
             body: evoRawBody,
           })
+          console.error('Evolution send error:', evoRes.status, JSON.stringify(evoData))
           const errMsg = evoData?.error || evoData?.message || `Evolution returned ${evoRes.status}`
           return new Response(JSON.stringify({ success: false, error: errMsg }), {
             status: evoRes.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
