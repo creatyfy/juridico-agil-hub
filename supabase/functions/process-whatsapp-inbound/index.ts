@@ -2,9 +2,9 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 
 // deno-lint-ignore no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
-import { handleAuthenticationFlow, isPhoneVerified, tryActivateNotificationsOptIn } from '../webhook-whatsapp/services/auth.ts'
-import { handleIncomingMessage } from '../webhook-whatsapp/services/orchestrator.ts'
-import type { RequestContext } from '../webhook-whatsapp/services/types.ts'
+import { handleAuthenticationFlow, isPhoneVerified, tryActivateNotificationsOptIn } from '../_shared/whatsapp-auth.ts'
+import { handleIncomingMessage } from '../_shared/whatsapp-orchestrator.ts'
+import type { RequestContext } from '../_shared/whatsapp-types.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
