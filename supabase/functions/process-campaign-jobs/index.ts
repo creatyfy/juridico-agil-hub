@@ -76,37 +76,42 @@ Deno.serve(async (req) => {
   const processed: Array<Record<string, unknown>> = []
 
   for (const job of jobs ?? []) {
-    const { data: recipients, error: recipientsError } = await svc
-      .from('campaign_recipients')
-      .select('id,tenant_id,campaign_job_id,destination,reference,payload,status,outbox_id,sent_at')
-      .eq('campaign_job_id', job.id)
-      .is('sent_at', null)
-      .in('status', ['pending', 'queued'])
-      .order('created_at', { ascending: true })
-      .limit(BATCH_SIZE)
-
-    console.log(`[campaign] Job ${job.id}: ${recipients?.length ?? 0} recipients to process`)
-
-    if (recipientsError) {
-      console.error(`[campaign] recipientsError for job ${job.id}:`, recipientsError.message)
-      processed.push({ campaign_job_id: job.id, status: 'recipients_query_error', error: recipientsError.message })
+    // Use claim RPC for atomic batch claiming (prevents duplicates)
+    let recipients: any[] = []
+    try {
+      const { data, error: claimError } = await svc.rpc('claim_campaign_recipients', {
+        p_campaign_job_id: job.id,
+        p_batch_size: BATCH_SIZE,
+      })
+      if (claimError) {
+        console.error(`[campaign] claim RPC error for job ${job.id}:`, claimError.message)
+        // Fallback to manual query + update
+        const { data: fallbackData, error: fallbackError } = await svc
+          .from('campaign_recipients')
+          .select('id,tenant_id,campaign_job_id,destination,reference,payload,status,outbox_id,sent_at')
+          .eq('campaign_job_id', job.id)
+          .is('sent_at', null)
+          .in('status', ['pending', 'queued'])
+          .order('created_at', { ascending: true })
+          .limit(BATCH_SIZE)
+        if (fallbackError) {
+          console.error(`[campaign] fallback query error for job ${job.id}:`, fallbackError.message)
+          processed.push({ campaign_job_id: job.id, status: 'recipients_query_error', error: fallbackError.message })
+          continue
+        }
+        recipients = fallbackData || []
+      } else {
+        recipients = data || []
+      }
+    } catch (e: any) {
+      console.error(`[campaign] claim exception for job ${job.id}:`, e.message)
+      processed.push({ campaign_job_id: job.id, status: 'claim_error', error: e.message })
       continue
     }
 
-    for (const recipient of recipients ?? []) {
-      const { data: claimRow, error: claimError } = await svc
-        .from('campaign_recipients')
-        .update({ status: 'processing', updated_at: new Date().toISOString() })
-        .eq('id', recipient.id)
-        .is('sent_at', null)
-        .in('status', ['pending', 'queued'])
-        .select('id')
-        .maybeSingle()
+    console.log(`[campaign] Job ${job.id}: ${recipients.length} recipients claimed for processing`)
 
-      if (claimError || !claimRow) {
-        processed.push({ recipient_id: recipient.id, status: 'already_claimed' })
-        continue
-      }
+    for (const recipient of recipients) {
 
       const payload = recipient.payload as Record<string, unknown>
       const messageText = String(payload.messageText ?? payload.message ?? '')
