@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, X, Loader2, Send, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
@@ -169,21 +169,34 @@ export default function CampanhasList() {
       .select('id, nome, numero_whatsapp')
       .in('id', selectedClientes);
 
-    const recipients = (clientesData ?? []).map((c: any) => {
-      const phone = String(c.numero_whatsapp).startsWith('55') ? c.numero_whatsapp : `55${c.numero_whatsapp}`;
-      return {
-        campaign_job_id: job.id,
-        tenant_id: user.id,
-        destination: phone,
-        reference: `${job.id}:${c.id}`,
-        status: 'queued',
-        payload: {
-          messageText: messageText.trim(),
-          instanceName: instance.instance_name,
-          clienteNome: c.nome,
-        },
-      };
-    });
+    const uniqueByPhone = new Map<string, { id: string; nome: string; phone: string }>();
+    for (const c of clientesData ?? []) {
+      const clean = String(c.numero_whatsapp ?? '').replace(/\D/g, '');
+      if (!clean) continue;
+      const phone = clean.startsWith('55') ? clean : `55${clean}`;
+      if (!uniqueByPhone.has(phone)) {
+        uniqueByPhone.set(phone, { id: c.id, nome: c.nome, phone });
+      }
+    }
+
+    const recipients = Array.from(uniqueByPhone.values()).map((c) => ({
+      campaign_job_id: job.id,
+      tenant_id: user.id,
+      destination: c.phone,
+      reference: `${job.id}:${c.id}`,
+      status: 'queued',
+      payload: {
+        messageText: messageText.trim(),
+        instanceName: instance.instance_name,
+        clienteNome: c.nome,
+      },
+    }));
+
+    if (recipients.length === 0) {
+      toast({ title: 'Nenhum destinatário válido', description: 'Confira os números de WhatsApp selecionados.', variant: 'destructive' });
+      setSubmitting(false);
+      return;
+    }
 
     const { error: recipientsError } = await (supabase as any).from('campaign_recipients').insert(recipients);
 
@@ -193,7 +206,17 @@ export default function CampanhasList() {
       return;
     }
 
-    toast({ title: 'Campanha criada!', description: `${recipients.length} destinatário(s) adicionado(s). O envio iniciará em breve.` });
+    const kickCampaign = await supabase.functions.invoke('process-campaign-jobs', {
+      body: { campaign_job_id: job.id },
+    });
+
+    const kickCampaignOk = !kickCampaign.error;
+    const skippedDuplicates = Math.max(0, (clientesData ?? []).length - recipients.length);
+
+    toast({
+      title: kickCampaignOk ? 'Campanha criada e disparo iniciado' : 'Campanha criada',
+      description: `${recipients.length} destinatário(s) adicionado(s).${skippedDuplicates > 0 ? ` ${skippedDuplicates} número(s) duplicado(s) foram ignorados.` : ''}`,
+    });
     setDialogOpen(false);
     setMessageText('');
     setCampaignName('');
@@ -305,6 +328,9 @@ export default function CampanhasList() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Nova Campanha</DialogTitle>
+            <DialogDescription>
+              Configure sua mensagem e selecione os destinatários para iniciar o disparo.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
