@@ -152,18 +152,25 @@ export async function processMovementDetected(svc: any, event: any): Promise<voi
       throw new Error('enqueue_failed:rate_limited:tenant_backlog_limit_exceeded')
     }
 
-    const { data: allowedToken, error: tokenError } = await svc.rpc('consume_token', {
-      p_tenant_id: processo.user_id,
-      p_instance_id: connectedInstance.id,
-      p_amount: 1,
-    })
+    // Token bucket rate-limiting (optional — function may not exist yet)
+    try {
+      const { data: allowedToken, error: tokenError } = await svc.rpc('consume_token', {
+        p_tenant_id: processo.user_id,
+        p_instance_id: connectedInstance.id,
+        p_amount: 1,
+      })
 
-    if (tokenError) {
-      throw new Error(`enqueue_failed:error:${tokenError.message}`)
-    }
-
-    if (!allowedToken) {
-      throw new Error('enqueue_failed:rate_limited:tenant_instance_token_bucket_exhausted')
+      if (tokenError) {
+        if (!tokenError.message?.includes('Could not find the function')) {
+          throw new Error(`enqueue_failed:error:${tokenError.message}`)
+        }
+        console.warn('consume_token not available, skipping rate-limit check')
+      } else if (allowedToken === false) {
+        throw new Error('enqueue_failed:rate_limited:tenant_instance_token_bucket_exhausted')
+      }
+    } catch (e: any) {
+      if (e.message?.startsWith('enqueue_failed:')) throw e
+      console.warn('consume_token call failed, skipping:', String(e))
     }
 
     const payload = {
