@@ -33,6 +33,16 @@ function extractMessageText(msg: any): string | null {
     || null
 }
 
+function extractMessageType(msg: any): string {
+  const msgContent = msg?.message || {}
+  if (msgContent.imageMessage) return 'image'
+  if (msgContent.videoMessage) return 'video'
+  if (msgContent.audioMessage) return 'audio'
+  if (msgContent.documentMessage) return 'document'
+  if (msgContent.stickerMessage) return 'sticker'
+  return 'text'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
@@ -88,6 +98,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, correlation_id: correlationId })
     }
 
+    // Handle inbound messages
     if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
       return jsonResponse({ ok: true, correlation_id: correlationId })
     }
@@ -101,8 +112,9 @@ Deno.serve(async (req) => {
           : []
 
     for (const item of payloadMessages) {
-      if (!item?.key || item.key?.fromMe) continue
+      if (!item?.key) continue
 
+      const isFromMe = item.key?.fromMe === true
       const rawJid = item.key.remoteJid
       if (!rawJid || rawJid === 'status@broadcast' || rawJid.includes('@g.us')) continue
 
@@ -113,43 +125,106 @@ Deno.serve(async (req) => {
       if (!incomingText) continue
 
       const phone = normalizePhone(rawJid)
+      const msgType = extractMessageType(item)
 
-      const { data: inbound, error: inboundError } = await supabase
-        .from('inbound_messages')
+      // Save message directly to whatsapp_mensagens
+      const { error: msgError } = await supabase
+        .from('whatsapp_mensagens')
         .upsert({
-          tenant_id: instance.user_id,
-          instance_id: instance.id,
-          provider_message_id: providerMessageId,
-          phone,
-          payload_raw: item,
-        }, { onConflict: 'tenant_id,instance_id,provider_message_id', ignoreDuplicates: false })
-        .select('id')
-        .maybeSingle()
+          instancia_id: instance.id,
+          remote_jid: rawJid,
+          message_id: providerMessageId,
+          direcao: isFromMe ? 'out' : 'in',
+          conteudo: incomingText,
+          tipo: msgType,
+          timestamp: item.messageTimestamp
+            ? new Date(Number(item.messageTimestamp) * 1000).toISOString()
+            : new Date().toISOString(),
+        }, { onConflict: 'message_id', ignoreDuplicates: true })
 
-      if (inboundError) {
-        logError('inbound_persist_failed', { correlation_id: correlationId, tenant_id: instance.user_id, error: inboundError.message })
-        continue
+      if (msgError) {
+        logError('whatsapp_mensagem_persist_failed', {
+          correlation_id: correlationId,
+          tenant_id: instance.user_id,
+          error: msgError.message,
+        })
       }
 
-      await supabase.from('domain_events').upsert({
-        tenant_id: instance.user_id,
-        event_type: 'WHATSAPP_MESSAGE_RECEIVED',
-        dedupe_key: `${instance.id}:${providerMessageId}`,
-        payload: {
-          inbound_message_id: inbound?.id,
-          instance_id: instance.id,
-          instance_name: instance.instance_name,
-          provider_message_id: providerMessageId,
-          phone,
-          message_preview: incomingText.slice(0, 80),
-        },
-      }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true })
+      // Update whatsapp_chats_cache
+      const contactName = item.pushName || item.verifiedBizName || phone
+      const now = new Date().toISOString()
+
+      const { error: cacheError } = await supabase
+        .from('whatsapp_chats_cache')
+        .upsert({
+          instancia_id: instance.id,
+          remote_jid: rawJid,
+          nome: contactName,
+          ultima_mensagem: incomingText.slice(0, 200),
+          ultimo_timestamp: now,
+          direcao: isFromMe ? 'out' : 'in',
+          nao_lidas: isFromMe ? 0 : 1,
+          updated_at: now,
+        }, { onConflict: 'instancia_id,remote_jid' })
+
+      if (cacheError) {
+        // If upsert failed (no unique constraint), try update then insert
+        logError('whatsapp_chat_cache_upsert_failed', {
+          correlation_id: correlationId,
+          error: cacheError.message,
+        })
+      }
+
+      // If not from me, increment unread count
+      if (!isFromMe) {
+        await supabase.rpc('increment_chat_unread', {
+          p_instancia_id: instance.id,
+          p_remote_jid: rawJid,
+        }).then(() => {}).catch(() => {
+          // RPC may not exist, ignore
+        })
+      }
+
+      // Also persist to inbound_messages + domain_events for AI processing (only inbound)
+      if (!isFromMe) {
+        const { data: inbound, error: inboundError } = await supabase
+          .from('inbound_messages')
+          .upsert({
+            tenant_id: instance.user_id,
+            instance_id: instance.id,
+            provider_message_id: providerMessageId,
+            phone,
+            payload_raw: item,
+          }, { onConflict: 'tenant_id,instance_id,provider_message_id', ignoreDuplicates: false })
+          .select('id')
+          .maybeSingle()
+
+        if (inboundError) {
+          logError('inbound_persist_failed', { correlation_id: correlationId, tenant_id: instance.user_id, error: inboundError.message })
+          continue
+        }
+
+        await supabase.from('domain_events').upsert({
+          tenant_id: instance.user_id,
+          event_type: 'WHATSAPP_MESSAGE_RECEIVED',
+          dedupe_key: `${instance.id}:${providerMessageId}`,
+          payload: {
+            inbound_message_id: inbound?.id,
+            instance_id: instance.id,
+            instance_name: instance.instance_name,
+            provider_message_id: providerMessageId,
+            phone,
+            message_preview: incomingText.slice(0, 80),
+          },
+        }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true })
+      }
 
       logInfo('whatsapp_inbound_event_enqueued', {
         correlation_id: correlationId,
         tenant_id: instance.user_id,
         instance_id: instance.id,
         telefone: phone,
+        from_me: isFromMe,
       })
     }
 

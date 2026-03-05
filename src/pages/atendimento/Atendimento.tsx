@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X, Loader2, RotateCcw } from 'lucide-react';
+import { MessageSquare, Send, Wifi, WifiOff, QrCode, RefreshCw, Phone, ArrowLeft, Search, Smile, X, Loader2, RotateCcw, Bot, BotOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useWhatsApp, type ChatItem, type Message } from '@/hooks/useWhatsApp';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -49,7 +50,7 @@ function QrCodeView({ qrCode, onRefresh, loading }: { qrCode: string | null; onR
   );
 }
 
-function ChatListItem({ chat, isSelected, onSelect }: { chat: ChatItem; isSelected: boolean; onSelect: () => void }) {
+function ChatListItem({ chat, isSelected, onSelect, hasNewMessage }: { chat: ChatItem; isSelected: boolean; onSelect: () => void; hasNewMessage?: boolean }) {
   const timeStr = chat.ultimo_timestamp
     ? (() => {
         const d = new Date(chat.ultimo_timestamp);
@@ -65,9 +66,9 @@ function ChatListItem({ chat, isSelected, onSelect }: { chat: ChatItem; isSelect
   return (
     <button
       onClick={onSelect}
-      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors text-left border-b border-border/30 ${
+      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors text-left border-b border-border/30 relative ${
         isSelected ? 'bg-accent' : ''
-      }`}
+      } ${hasNewMessage && !isSelected ? 'animate-pulse' : ''}`}
     >
       <Avatar className="h-12 w-12 shrink-0">
         {chat.foto_url && <AvatarImage src={chat.foto_url} alt={chat.nome} />}
@@ -86,24 +87,32 @@ function ChatListItem({ chat, isSelected, onSelect }: { chat: ChatItem; isSelect
           <p className="text-xs text-muted-foreground truncate flex-1">
             {chat.direcao === 'out' && '✓ '}{chat.ultima_mensagem}
           </p>
-          {chat.nao_lidas > 0 && (
-            <span className="ml-2 shrink-0 bg-green-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-              {chat.nao_lidas}
-            </span>
-          )}
+          <div className="flex items-center gap-1 ml-2 shrink-0">
+            {chat.ai_paused ? (
+              <BotOff className="h-3 w-3 text-muted-foreground" />
+            ) : (
+              <Bot className="h-3 w-3 text-green-500" />
+            )}
+            {chat.nao_lidas > 0 && (
+              <span className="bg-green-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                {chat.nao_lidas}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </button>
   );
 }
 
-function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchChange, onRefresh }: {
+function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchChange, onRefresh, recentlyUpdatedJids }: {
   chats: ChatItem[];
   selectedChat: string | null;
   onSelect: (jid: string) => void;
   searchTerm: string;
   onSearchChange: (v: string) => void;
   onRefresh: () => void;
+  recentlyUpdatedJids: Set<string>;
 }) {
   const filtered = chats.filter(c =>
     c.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -134,6 +143,7 @@ function ConversationList({ chats, selectedChat, onSelect, searchTerm, onSearchC
             chat={chat}
             isSelected={selectedChat === chat.remote_jid}
             onSelect={() => onSelect(chat.remote_jid)}
+            hasNewMessage={recentlyUpdatedJids.has(chat.remote_jid)}
           />
         ))}
       </ScrollArea>
@@ -174,7 +184,7 @@ function MessageBubble({ msg }: { msg: Message }) {
   const isOut = msg.direcao === 'out';
   return (
     <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+      <div className={`max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
         isOut
           ? 'bg-primary text-primary-foreground rounded-br-none'
           : 'bg-card border border-border rounded-bl-none'
@@ -189,12 +199,14 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
-function ChatView({ messages, selectedChat, chats, onSend, onBack }: {
+function ChatView({ messages, selectedChat, chats, onSend, onBack, aiPaused, onToggleAi }: {
   messages: Message[];
   selectedChat: string;
   chats: ChatItem[];
   onSend: (text: string) => void;
   onBack: () => void;
+  aiPaused: boolean;
+  onToggleAi: () => void;
 }) {
   const [text, setText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -225,23 +237,42 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack }: {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-3 p-3 border-b bg-card">
-        <Button variant="ghost" size="icon" className="md:hidden" onClick={onBack}>
+        <Button variant="ghost" size="icon" className="md:hidden shrink-0" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <Avatar className="h-10 w-10">
+        <Avatar className="h-10 w-10 shrink-0">
           {contact?.foto_url && <AvatarImage src={contact.foto_url} alt={contact.nome} />}
           <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
             {(contact?.nome || '?').substring(0, 2).toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <div>
-          <p className="font-medium text-sm">{contact?.nome || selectedChat.replace('@s.whatsapp.net', '')}</p>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-sm truncate">{contact?.nome || selectedChat.replace('@s.whatsapp.net', '')}</p>
           <p className="text-[10px] text-muted-foreground">{contact?.numero || ''}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={aiPaused ? 'outline' : 'secondary'}
+                size="sm"
+                onClick={onToggleAi}
+                className="gap-1.5 text-xs"
+              >
+                {aiPaused ? <BotOff className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{aiPaused ? 'IA Pausada' : 'IA Ativa'}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{aiPaused ? 'Retomar IA nesta conversa' : 'Pausar IA nesta conversa'}</TooltipContent>
+          </Tooltip>
+          <Badge variant={aiPaused ? 'outline' : 'default'} className={`text-[10px] ${aiPaused ? '' : 'bg-green-600'}`}>
+            {aiPaused ? 'IA Off' : 'IA On'}
+          </Badge>
         </div>
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 p-3 sm:p-4">
         <div className="space-y-2 max-w-2xl mx-auto">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground text-sm py-8">
@@ -263,22 +294,22 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack }: {
       </ScrollArea>
 
       {/* Input */}
-      <div className="relative p-3 border-t bg-card">
+      <div className="relative p-2 sm:p-3 border-t bg-card">
         {showEmoji && (
           <div ref={emojiRef} className="absolute bottom-full left-0 mb-2 z-50">
             <EmojiPicker
               onEmojiClick={(emojiData: any) => setText(prev => prev + emojiData.emoji)}
               emojiStyle={EmojiStyle.NATIVE}
               theme={Theme.AUTO}
-              width={350}
-              height={400}
+              width={320}
+              height={350}
               searchPlaceholder="Buscar emoji..."
               lazyLoadEmojis
             />
           </div>
         )}
         <div className="flex gap-2 items-center">
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setShowEmoji(!showEmoji)}>
+          <Button variant="ghost" size="icon" className="shrink-0 hidden sm:flex" onClick={() => setShowEmoji(!showEmoji)}>
             {showEmoji ? <X className="h-5 w-5" /> : <Smile className="h-5 w-5" />}
           </Button>
           <Input
@@ -300,6 +331,40 @@ function ChatView({ messages, selectedChat, chats, onSend, onBack }: {
 export default function Atendimento() {
   const wpp = useWhatsApp();
   const [searchTerm, setSearchTerm] = useState('');
+  const [recentlyUpdatedJids, setRecentlyUpdatedJids] = useState<Set<string>>(new Set());
+
+  // Track recently updated chats for visual indicator
+  useEffect(() => {
+    if (wpp.status !== 'connected') return;
+    const channel = supabase
+      .channel('atendimento-new-msg-indicator')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'whatsapp_mensagens',
+      }, (payload) => {
+        const msg = payload.new as any;
+        if (msg.direcao === 'in' && msg.remote_jid !== wpp.selectedChat) {
+          setRecentlyUpdatedJids(prev => new Set(prev).add(msg.remote_jid));
+          // Clear after 5s
+          setTimeout(() => {
+            setRecentlyUpdatedJids(prev => {
+              const next = new Set(prev);
+              next.delete(msg.remote_jid);
+              return next;
+            });
+          }, 5000);
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [wpp.status, wpp.selectedChat]);
+
+  // Merge AI pause state into chats
+  const chatsWithAi = wpp.chats.map(c => ({
+    ...c,
+    ai_paused: wpp.aiPausedChats.has(c.remote_jid),
+  }));
 
   if (wpp.status === 'loading') {
     return (
@@ -311,12 +376,12 @@ export default function Atendimento() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold">Atendimento</h1>
-          <p className="text-muted-foreground text-sm mt-1">Central de atendimento via WhatsApp</p>
+          <h1 className="text-xl sm:text-2xl font-bold">Atendimento</h1>
+          <p className="text-muted-foreground text-xs sm:text-sm mt-1">Central de atendimento via WhatsApp</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {wpp.syncing && (
             <Badge variant="secondary" className="gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />Sincronizando...
@@ -332,7 +397,7 @@ export default function Atendimento() {
       </div>
 
       {wpp.status === 'disconnected' && (
-        <div className="card-elevated flex flex-col items-center justify-center p-16 text-center">
+        <div className="card-elevated flex flex-col items-center justify-center p-8 sm:p-16 text-center">
           <Phone className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <h3 className="text-lg font-semibold text-muted-foreground">WhatsApp não conectado</h3>
           <p className="text-sm text-muted-foreground/70 mt-1 max-w-sm mb-6">
@@ -351,15 +416,23 @@ export default function Atendimento() {
       )}
 
       {wpp.status === 'connected' && (
-        <div className="card-elevated h-[calc(100vh-12rem)] flex overflow-hidden rounded-lg">
+        <div className="card-elevated h-[calc(100vh-10rem)] sm:h-[calc(100vh-12rem)] flex overflow-hidden rounded-lg">
           <div className={`w-full md:w-80 shrink-0 ${wpp.selectedChat ? 'hidden md:flex md:flex-col' : 'flex flex-col'}`}>
             <ConversationList
-              chats={wpp.chats}
+              chats={chatsWithAi}
               selectedChat={wpp.selectedChat}
-              onSelect={(jid) => wpp.loadMessages(jid)}
+              onSelect={(jid) => {
+                setRecentlyUpdatedJids(prev => {
+                  const next = new Set(prev);
+                  next.delete(jid);
+                  return next;
+                });
+                wpp.loadMessages(jid);
+              }}
               searchTerm={searchTerm}
               onSearchChange={setSearchTerm}
               onRefresh={wpp.loadChats}
+              recentlyUpdatedJids={recentlyUpdatedJids}
             />
           </div>
           <div className={`flex-1 ${!wpp.selectedChat ? 'hidden md:flex' : 'flex'} flex-col`}>
@@ -367,9 +440,11 @@ export default function Atendimento() {
               <ChatView
                 messages={wpp.messages}
                 selectedChat={wpp.selectedChat}
-                chats={wpp.chats}
+                chats={chatsWithAi}
                 onSend={(text) => wpp.sendMessage(wpp.selectedChat!, text)}
                 onBack={() => wpp.setSelectedChat(null)}
+                aiPaused={wpp.aiPausedChats.has(wpp.selectedChat)}
+                onToggleAi={() => wpp.toggleAiPause(wpp.selectedChat!)}
               />
             ) : (
               <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -385,3 +460,7 @@ export default function Atendimento() {
     </div>
   );
 }
+
+// Need to import supabase for the realtime channel in the component
+// eslint-disable-next-line react-refresh/only-export-components
+import { supabase } from '@/integrations/supabase/client';
