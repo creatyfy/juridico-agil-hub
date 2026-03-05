@@ -60,7 +60,7 @@ export default function CampanhasList() {
 
   const loadCampaigns = async () => {
     if (!user) return;
-    const { data } = await supabase
+    const { data } = await (supabase as any)
       .from('campaign_jobs')
       .select(`
         id, name, status, created_at, started_at, completed_at, cancelled_at,
@@ -145,7 +145,7 @@ export default function CampanhasList() {
 
     // Cria o job
     const name = campaignName.trim() || `Campanha ${new Date().toLocaleDateString('pt-BR')}`;
-    const { data: job, error: jobError } = await supabase
+    const { data: job, error: jobError } = await (supabase as any)
       .from('campaign_jobs')
       .insert({
         tenant_id: user.id,
@@ -185,7 +185,7 @@ export default function CampanhasList() {
       };
     });
 
-    const { error: recipientsError } = await supabase.from('campaign_recipients').insert(recipients);
+    const { error: recipientsError } = await (supabase as any).from('campaign_recipients').insert(recipients);
 
     if (recipientsError) {
       toast({ title: 'Erro ao adicionar destinatários', description: recipientsError.message, variant: 'destructive' });

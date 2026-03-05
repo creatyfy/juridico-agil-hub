@@ -20,7 +20,7 @@ export default function Configuracoes() {
   const [savingReminder, setSavingReminder] = useState(false);
 
   useEffect(() => {
-    supabase.rpc('get_reminder_days').then(({ data }) => {
+    (supabase as any).rpc('get_reminder_days').then(({ data }: any) => {
       if (data != null) setReminderDays(data as number);
     });
   }, []);
@@ -49,7 +49,7 @@ export default function Configuracoes() {
 
   const handleSaveReminder = async () => {
     setSavingReminder(true);
-    const { error } = await supabase.rpc('set_reminder_days', { p_days: reminderDays });
+    const { error } = await (supabase as any).rpc('set_reminder_days', { p_days: reminderDays });
     setSavingReminder(false);
     if (error) {
       toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });

@@ -79,13 +79,13 @@ export default function AdvogadoDashboard() {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      const { count: msgs } = await supabase
+      const { count: msgs } = await (supabase as any)
         .from('message_outbox')
         .select('*', { count: 'exact', head: true })
         .gte('created_at', sevenDaysAgo.toISOString())
         .in('status', ['sent', 'delivered', 'pending', 'retry']);
 
-      const { count: wppClientes } = await supabase
+      const { count: wppClientes } = await (supabase as any)
         .from('whatsapp_contacts')
         .select('*', { count: 'exact', head: true })
         .eq('verified', true)
