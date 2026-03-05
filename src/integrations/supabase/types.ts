@@ -77,6 +77,122 @@ export type Database = {
         }
         Relationships: []
       }
+      campaign_jobs: {
+        Row: {
+          cancelled_at: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          instance_id: string
+          name: string
+          payload_template: Json
+          started_at: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          cancelled_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          instance_id: string
+          name: string
+          payload_template?: Json
+          started_at?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          cancelled_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          instance_id?: string
+          name?: string
+          payload_template?: Json
+          started_at?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_jobs_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      campaign_recipients: {
+        Row: {
+          attempts: number
+          campaign_job_id: string
+          created_at: string
+          destination: string
+          id: string
+          last_error: string | null
+          outbox_id: string | null
+          payload: Json
+          reference: string
+          sent_at: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          campaign_job_id: string
+          created_at?: string
+          destination: string
+          id?: string
+          last_error?: string | null
+          outbox_id?: string | null
+          payload?: Json
+          reference: string
+          sent_at?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          campaign_job_id?: string
+          created_at?: string
+          destination?: string
+          id?: string
+          last_error?: string | null
+          outbox_id?: string | null
+          payload?: Json
+          reference?: string
+          sent_at?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_recipients_campaign_job_id_fkey"
+            columns: ["campaign_job_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_recipients_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "message_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cliente_processos: {
         Row: {
           advogado_user_id: string
@@ -265,6 +381,74 @@ export type Database = {
           verified?: boolean
         }
         Relationships: []
+      }
+      message_outbox: {
+        Row: {
+          aggregate_id: string | null
+          aggregate_type: string
+          attempts: number
+          campaign_job_id: string | null
+          created_at: string
+          dead_lettered_at: string | null
+          delivered_at: string | null
+          id: string
+          idempotency_key: string
+          lease_until: string | null
+          next_retry_at: string | null
+          payload: Json
+          provider_message_id: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+          worker_id: string | null
+        }
+        Insert: {
+          aggregate_id?: string | null
+          aggregate_type?: string
+          attempts?: number
+          campaign_job_id?: string | null
+          created_at?: string
+          dead_lettered_at?: string | null
+          delivered_at?: string | null
+          id?: string
+          idempotency_key: string
+          lease_until?: string | null
+          next_retry_at?: string | null
+          payload?: Json
+          provider_message_id?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Update: {
+          aggregate_id?: string | null
+          aggregate_type?: string
+          attempts?: number
+          campaign_job_id?: string | null
+          created_at?: string
+          dead_lettered_at?: string | null
+          delivered_at?: string | null
+          id?: string
+          idempotency_key?: string
+          lease_until?: string | null
+          next_retry_at?: string | null
+          payload?: Json
+          provider_message_id?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_message_outbox_campaign_job"
+            columns: ["campaign_job_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       movimentacoes: {
         Row: {
