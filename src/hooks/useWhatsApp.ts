@@ -73,6 +73,7 @@ export function useWhatsApp() {
   const selectedChatRef = useRef<string | null>(null);
   const syncedRef = useRef(false);
   const lastPollRef = useRef<string | null>(null);
+  const statusFailureCountRef = useRef(0);
 
   // Keep selectedChatRef in sync
   useEffect(() => {
@@ -82,18 +83,34 @@ export function useWhatsApp() {
   const checkStatus = useCallback(async () => {
     try {
       const res = await callEvolution('status');
-      if (res.status === 'not_found') {
-        setStatus('disconnected');
-      } else if (res.status === 'connected') {
+      if (res.status === 'connected') {
+        statusFailureCountRef.current = 0;
         setStatus('connected');
         callEvolution('set-webhook', undefined, {}).catch(e => console.warn('set-webhook:', e));
       } else if (res.status === 'connecting') {
+        statusFailureCountRef.current = 0;
         setStatus('connecting');
-      } else {
-        setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
+      } else if (res.status === 'disconnected' || res.status === 'not_found') {
+        setStatus(prev => {
+          if (prev === 'connecting') return 'connecting';
+          if (prev === 'connected') {
+            statusFailureCountRef.current += 1;
+            return statusFailureCountRef.current >= 2 ? 'disconnected' : 'connected';
+          }
+          statusFailureCountRef.current = 0;
+          return 'disconnected';
+        });
       }
     } catch {
-      setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
+      setStatus(prev => {
+        if (prev === 'connecting') return 'connecting';
+        if (prev === 'connected') {
+          statusFailureCountRef.current += 1;
+          return statusFailureCountRef.current >= 2 ? 'disconnected' : 'connected';
+        }
+        statusFailureCountRef.current = 0;
+        return 'disconnected';
+      });
     }
   }, []);
 
@@ -103,6 +120,7 @@ export function useWhatsApp() {
       const res = await callEvolution('connect', undefined, {});
       if (res.qrcode?.base64) setQrCode(res.qrcode.base64);
       else if (res.qrcode?.code) setQrCode(res.qrcode.code);
+      statusFailureCountRef.current = 0;
       setStatus('connecting');
     } finally {
       setLoading(false);
@@ -121,6 +139,7 @@ export function useWhatsApp() {
     setLoading(true);
     try {
       await callEvolution('disconnect', undefined, {});
+      statusFailureCountRef.current = 0;
       setStatus('disconnected');
       setQrCode(null);
       setChats([]);
@@ -238,8 +257,10 @@ export function useWhatsApp() {
       }, (payload) => {
         const inst = payload.new as any;
         if (inst.status === 'connected') {
+          statusFailureCountRef.current = 0;
           setStatus('connected');
         } else if (inst.status === 'connecting') {
+          statusFailureCountRef.current = 0;
           setStatus('connecting');
         } else {
           setStatus(prev => prev === 'connecting' ? 'connecting' : 'disconnected');
@@ -257,6 +278,15 @@ export function useWhatsApp() {
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [status]);
+
+  // Poll status periodically while connected to self-heal stale UI state
+  useEffect(() => {
+    if (status !== 'connected') return;
+    const interval = setInterval(() => {
+      checkStatus().catch(() => {});
+    }, 45_000);
+    return () => clearInterval(interval);
+  }, [status, checkStatus]);
 
   // Poll status while connecting
   useEffect(() => {
