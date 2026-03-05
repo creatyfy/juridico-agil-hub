@@ -1,0 +1,51 @@
+// @ts-nocheck - Deno edge function
+import type { Intent } from './whatsapp-types.ts'
+
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
+const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini'
+
+const INTENTS: Intent[] = ['PROCESS_STATUS', 'HUMAN_SUPPORT', 'NEW_CLIENT', 'OPT_OUT', 'OTHER']
+
+export async function classifyIntent(message: string): Promise<Intent> {
+  if (!OPENAI_API_KEY) {
+    const lowered = message.toLowerCase()
+    if (lowered.includes('parar') || lowered.includes('cancelar') || lowered.includes('descadastrar') || lowered.includes('sair') || lowered.includes('stop')) return 'OPT_OUT'
+    if (lowered.includes('process') || lowered.includes('andamento') || lowered.includes('status')) return 'PROCESS_STATUS'
+    if (lowered.includes('advogado') || lowered.includes('humano') || lowered.includes('atendente')) return 'HUMAN_SUPPORT'
+    return 'OTHER'
+  }
+
+  const prompt = `Classifique a intenção da mensagem de WhatsApp para escritório jurídico.
+Retorne SOMENTE JSON no formato {"intent":"..."}.
+Intenções permitidas: PROCESS_STATUS, HUMAN_SUPPORT, NEW_CLIENT, OPT_OUT, OTHER.
+OPT_OUT: pessoa quer parar de receber notificações (parar, cancelar, descadastrar, stop, não quero mais).
+Mensagem: ${message}`
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+
+  if (!res.ok) return 'OTHER'
+
+  const data = await res.json()
+  const raw = data?.choices?.[0]?.message?.content
+  if (!raw) return 'OTHER'
+
+  try {
+    const parsed = JSON.parse(raw)
+    const candidate = String(parsed.intent ?? '').toUpperCase() as Intent
+    return INTENTS.includes(candidate) ? candidate : 'OTHER'
+  } catch {
+    return 'OTHER'
+  }
+}
