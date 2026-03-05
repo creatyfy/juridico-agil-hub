@@ -348,6 +348,10 @@ export type Database = {
           ativo: boolean
           created_at: string
           id: string
+          judit_request_attempts: number | null
+          judit_request_created_at: string | null
+          judit_request_id: string | null
+          judit_request_status: string | null
           processo_id: string
           ultima_sync: string | null
           updated_at: string
@@ -357,6 +361,10 @@ export type Database = {
           ativo?: boolean
           created_at?: string
           id?: string
+          judit_request_attempts?: number | null
+          judit_request_created_at?: string | null
+          judit_request_id?: string | null
+          judit_request_status?: string | null
           processo_id: string
           ultima_sync?: string | null
           updated_at?: string
@@ -366,6 +374,10 @@ export type Database = {
           ativo?: boolean
           created_at?: string
           id?: string
+          judit_request_attempts?: number | null
+          judit_request_created_at?: string | null
+          judit_request_id?: string | null
+          judit_request_status?: string | null
           processo_id?: string
           ultima_sync?: string | null
           updated_at?: string

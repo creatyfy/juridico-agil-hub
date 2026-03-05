@@ -50,7 +50,7 @@ export default function ClienteDetail() {
     async function fetchMensagens() {
       setLoadingMsgs(true);
       // Get verified phone for this client
-      const { data: contact } = await supabase
+      const { data: contact } = await (supabase as any)
         .from('whatsapp_contacts')
         .select('phone_number')
         .eq('cliente_id', id)
@@ -63,7 +63,7 @@ export default function ClienteDetail() {
         return;
       }
 
-      const { data: msgs } = await supabase
+      const { data: msgs } = await (supabase as any)
         .from('message_outbox')
         .select('id, created_at, status, payload')
         .filter('payload->>destinationNumber', 'eq', contact.phone_number)

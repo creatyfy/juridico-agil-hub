@@ -27,7 +27,7 @@ export default function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.rpc('get_admin_stats').then(({ data, error: rpcError }) => {
+    (supabase as any).rpc('get_admin_stats').then(({ data, error: rpcError }: any) => {
       if (rpcError) setError(rpcError.message);
       else setStats(data as AdminStats);
       setLoading(false);
