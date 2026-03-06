@@ -301,6 +301,36 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_logs: {
+        Row: {
+          created_at: string
+          direction: string
+          id: string
+          intent: string | null
+          message: string
+          phone_number: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          direction: string
+          id?: string
+          intent?: string | null
+          message: string
+          phone_number: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          id?: string
+          intent?: string | null
+          message?: string
+          phone_number?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       conversation_processing_locks: {
         Row: {
           fence_token: number
@@ -652,6 +682,36 @@ export type Database = {
         }
         Relationships: []
       }
+      process_consultation_audit_logs: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          id: string
+          intent: string
+          phone_number: string
+          process_id: string | null
+          tenant_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          intent: string
+          phone_number: string
+          process_id?: string | null
+          tenant_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          intent?: string
+          phone_number?: string
+          process_id?: string | null
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       processo_monitoramentos: {
         Row: {
           ativo: boolean
@@ -853,6 +913,72 @@ export type Database = {
             columns: ["instancia_id"]
             isOneToOne: false
             referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_contacts: {
+        Row: {
+          blocked_until: string | null
+          client_id: string | null
+          conversation_state: string
+          cpf_attempts: number
+          created_at: string
+          id: string
+          last_notification_sent_at: string | null
+          notifications_opt_in: boolean
+          otp_attempts: number
+          phone_number: string
+          process_id: string | null
+          tenant_id: string
+          updated_at: string
+          verified: boolean
+        }
+        Insert: {
+          blocked_until?: string | null
+          client_id?: string | null
+          conversation_state?: string
+          cpf_attempts?: number
+          created_at?: string
+          id?: string
+          last_notification_sent_at?: string | null
+          notifications_opt_in?: boolean
+          otp_attempts?: number
+          phone_number: string
+          process_id?: string | null
+          tenant_id: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Update: {
+          blocked_until?: string | null
+          client_id?: string | null
+          conversation_state?: string
+          cpf_attempts?: number
+          created_at?: string
+          id?: string
+          last_notification_sent_at?: string | null
+          notifications_opt_in?: boolean
+          otp_attempts?: number
+          phone_number?: string
+          process_id?: string | null
+          tenant_id?: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_contacts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_contacts_process_id_fkey"
+            columns: ["process_id"]
+            isOneToOne: false
+            referencedRelation: "processos"
             referencedColumns: ["id"]
           },
         ]
