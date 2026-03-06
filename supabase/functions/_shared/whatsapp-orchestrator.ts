@@ -27,46 +27,53 @@ async function registerEscalation(ctx: RequestContext, clienteId: string | null,
 }
 
 async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise<ClienteInfo> {
-  // Fetch client name
-  const { data: cliente } = await ctx.supabase
+  console.log(`[DEBUG-ORCH] fetchClienteInfo start clienteId=${clienteId} tenantId=${ctx.tenantId}`)
+
+  const { data: cliente, error: clienteError } = await ctx.supabase
     .from('clientes')
     .select('nome')
     .eq('id', clienteId)
     .eq('user_id', ctx.tenantId)
     .maybeSingle()
 
+  console.log(`[DEBUG-ORCH] clientes query: nome=${cliente?.nome ?? 'NULL'} error=${clienteError?.message ?? 'none'}`)
+
   const nome = cliente?.nome ?? 'Cliente'
 
-  // Fetch active processes via cliente_processos
-  const { data: bindings } = await ctx.supabase
+  const { data: bindings, error: bindingsError } = await ctx.supabase
     .from('cliente_processos')
     .select('processo_id')
     .eq('cliente_id', clienteId)
     .eq('status', 'ativo')
 
+  console.log(`[DEBUG-ORCH] cliente_processos query: count=${bindings?.length ?? 0} error=${bindingsError?.message ?? 'none'}`)
+
   const processoIds = (bindings ?? []).map((b: any) => b.processo_id).filter(Boolean)
 
   if (processoIds.length === 0) {
+    console.log(`[DEBUG-ORCH] no active processes found`)
     return { nome, processos: [] }
   }
 
-  // Fetch process details
-  const { data: processosData } = await ctx.supabase
+  const { data: processosData, error: processosError } = await ctx.supabase
     .from('processos')
     .select('id, numero_cnj, tribunal, vara, classe, assunto, status, data_distribuicao')
     .eq('user_id', ctx.tenantId)
     .in('id', processoIds)
 
+  console.log(`[DEBUG-ORCH] processos query: count=${processosData?.length ?? 0} error=${processosError?.message ?? 'none'}`)
+
   const processos: ProcessoInfo[] = []
 
   for (const proc of processosData ?? []) {
-    // Fetch last 5 movements for each process
     const { data: movs } = await ctx.supabase
       .from('movimentacoes')
       .select('descricao, data_movimentacao')
       .eq('processo_id', proc.id)
       .order('data_movimentacao', { ascending: false })
       .limit(5)
+
+    console.log(`[DEBUG-ORCH] movimentacoes for ${proc.numero_cnj}: count=${movs?.length ?? 0}`)
 
     processos.push({
       numero_cnj: proc.numero_cnj,
@@ -88,8 +95,9 @@ async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise
 
 export async function handleIncomingMessage(ctx: RequestContext & { clienteId: string }) {
   try {
-    // Fetch recent history BEFORE logging current message
-    const { data: recentLogs } = await ctx.supabase
+    console.log(`[DEBUG-ORCH] handleIncomingMessage start clienteId=${ctx.clienteId} phone=${ctx.phone} msg="${ctx.message.slice(0, 30)}"`)
+
+    const { data: recentLogs, error: logsError } = await ctx.supabase
       .from('conversation_logs')
       .select('direction, message')
       .eq('tenant_id', ctx.tenantId)
@@ -97,13 +105,18 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
       .order('created_at', { ascending: false })
       .limit(6)
 
+    console.log(`[DEBUG-ORCH] conversation_logs: count=${recentLogs?.length ?? 0} error=${logsError?.message ?? 'none'}`)
+
     await logConversation(ctx, 'inbound', ctx.message)
 
     const history = (recentLogs ?? []).reverse()
     const contextLines = history.map((l: any) => `${l.direction === 'inbound' ? 'Cliente' : 'Bot'}: ${l.message}`).join('\n')
     const intentInput = history.length > 0 ? `${contextLines}\nCliente: ${ctx.message}` : ctx.message
 
+    console.log(`[DEBUG-ORCH] calling classifyIntent...`)
+    const intentStart = Date.now()
     const intent = await classifyIntent(intentInput)
+    console.log(`[DEBUG-ORCH] classifyIntent result="${intent}" took=${Date.now() - intentStart}ms`)
 
     logInfo('orchestrator_decision', {
       request_id: ctx.requestId,
@@ -120,7 +133,9 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
         .eq('phone_number', ctx.phone)
 
       const text = 'Entendido. Você não receberá mais notificações automáticas sobre seus processos. Para reativar, entre em contato com o escritório.'
+      console.log(`[DEBUG-ORCH] enqueuing OPT_OUT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `opt_out:${ctx.clienteId}:${ctx.requestId}`)
+      console.log(`[DEBUG-ORCH] OPT_OUT enqueued OK`)
       return
     }
 
@@ -133,22 +148,36 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
 
       await registerEscalation(ctx, ctx.clienteId, 'HUMAN_SUPPORT', { intent })
       const text = 'Perfeito. Encaminhei sua conversa para o advogado responsável, que continuará o atendimento por aqui.'
+      console.log(`[DEBUG-ORCH] enqueuing HUMAN_SUPPORT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `human_support:${ctx.clienteId}:${ctx.requestId}`)
+      console.log(`[DEBUG-ORCH] HUMAN_SUPPORT enqueued OK`)
       return
     }
 
     if (intent === 'NEW_CLIENT') {
       const text = 'Obrigado pelo contato! Vou registrar seu interesse e nossa equipe entrará em contato para o atendimento inicial.'
       await registerEscalation(ctx, ctx.clienteId, 'NEW_CLIENT', { intent })
+      console.log(`[DEBUG-ORCH] enqueuing NEW_CLIENT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `new_client:${ctx.requestId}`)
+      console.log(`[DEBUG-ORCH] NEW_CLIENT enqueued OK`)
       return
     }
 
-    // PROCESS_STATUS or OTHER: fetch real data and generate contextual response
+    console.log(`[DEBUG-ORCH] calling fetchClienteInfo for clienteId=${ctx.clienteId}`)
+    const fetchStart = Date.now()
     const clienteInfo = await fetchClienteInfo(ctx, ctx.clienteId)
+    console.log(`[DEBUG-ORCH] fetchClienteInfo done: nome="${clienteInfo.nome}" processos=${clienteInfo.processos.length} took=${Date.now() - fetchStart}ms`)
+
+    console.log(`[DEBUG-ORCH] calling generateContextualResponse...`)
+    const genStart = Date.now()
     const response = await generateContextualResponse(clienteInfo, ctx.message, contextLines, intent)
+    console.log(`[DEBUG-ORCH] generateContextualResponse done: responseLen=${response.length} took=${Date.now() - genStart}ms`)
+
+    console.log(`[DEBUG-ORCH] enqueuing contextual response`)
     await enqueueWhatsAppText(ctx, response, 'orchestrator', `contextual:${ctx.clienteId}:${ctx.requestId}`)
+    console.log(`[DEBUG-ORCH] contextual response enqueued OK`)
   } catch (error) {
+    console.error(`[DEBUG-ORCH] EXCEPTION: ${String(error)}`)
     logError('orchestrator_failed', {
       request_id: ctx.requestId,
       tenant_id: ctx.tenantId,
