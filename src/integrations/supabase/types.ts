@@ -1273,7 +1273,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      run_outbox_worker_cron: { Args: never; Returns: undefined }
       run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
+      run_process_domain_events_cron: { Args: never; Returns: undefined }
+      run_process_whatsapp_inbound_cron: { Args: never; Returns: undefined }
       run_sync_movements_cron: { Args: never; Returns: undefined }
     }
     Enums: {
