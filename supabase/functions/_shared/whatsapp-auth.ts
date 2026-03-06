@@ -39,7 +39,7 @@ async function getOrCreateContact(ctx: RequestContext): Promise<ContactRecord> {
     .insert({
       tenant_id: ctx.tenantId,
       phone_number: ctx.phone,
-      conversation_state: 'WAITING_CPF',
+      conversation_state: 'IDLE',
       verified: false,
       notifications_opt_in: false,
       cpf_attempts: 0,
@@ -48,9 +48,6 @@ async function getOrCreateContact(ctx: RequestContext): Promise<ContactRecord> {
     .single()
 
   if (error || !data) throw new Error('whatsapp_contact_create_failed')
-
-  // First contact: ask for CPF
-  await enqueueWhatsAppText(ctx, MESSAGES.ASK_CPF, 'auth', `ask_cpf:${data.id}`)
 
   return data as ContactRecord
 }
