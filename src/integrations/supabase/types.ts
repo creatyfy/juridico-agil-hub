@@ -301,6 +301,33 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_processing_locks: {
+        Row: {
+          fence_token: number
+          lease_until: string | null
+          phone: string
+          tenant_id: string
+          updated_at: string
+          worker_id: string | null
+        }
+        Insert: {
+          fence_token?: number
+          lease_until?: string | null
+          phone: string
+          tenant_id: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Update: {
+          fence_token?: number
+          lease_until?: string | null
+          phone?: string
+          tenant_id?: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       convites_vinculacao: {
         Row: {
           advogado_user_id: string
@@ -355,6 +382,63 @@ export type Database = {
           },
         ]
       }
+      domain_events: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_lettered_at: string | null
+          dedupe_key: string | null
+          event_type: string
+          id: string
+          last_error: string | null
+          lease_until: string | null
+          lease_version: number
+          next_retry_at: string | null
+          payload: Json
+          processed_at: string | null
+          processing_started_at: string | null
+          status: string
+          tenant_id: string
+          worker_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string | null
+          dedupe_key?: string | null
+          event_type: string
+          id?: string
+          last_error?: string | null
+          lease_until?: string | null
+          lease_version?: number
+          next_retry_at?: string | null
+          payload: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          status?: string
+          tenant_id: string
+          worker_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string | null
+          dedupe_key?: string | null
+          event_type?: string
+          id?: string
+          last_error?: string | null
+          lease_until?: string | null
+          lease_version?: number
+          next_retry_at?: string | null
+          payload?: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          status?: string
+          tenant_id?: string
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       email_verification_codes: {
         Row: {
           code: string
@@ -382,8 +466,47 @@ export type Database = {
         }
         Relationships: []
       }
+      inbound_messages: {
+        Row: {
+          created_at: string
+          id: string
+          instance_id: string
+          payload_raw: Json
+          phone: string
+          provider_message_id: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instance_id: string
+          payload_raw: Json
+          phone: string
+          provider_message_id: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instance_id?: string
+          payload_raw?: Json
+          phone?: string
+          provider_message_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inbound_messages_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_outbox: {
         Row: {
+          accepted_reconciled_at: string | null
           aggregate_id: string | null
           aggregate_type: string
           attempts: number
@@ -403,6 +526,7 @@ export type Database = {
           worker_id: string | null
         }
         Insert: {
+          accepted_reconciled_at?: string | null
           aggregate_id?: string | null
           aggregate_type?: string
           attempts?: number
@@ -422,6 +546,7 @@ export type Database = {
           worker_id?: string | null
         }
         Update: {
+          accepted_reconciled_at?: string | null
           aggregate_id?: string | null
           aggregate_type?: string
           attempts?: number
@@ -855,6 +980,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      worker_processing_metrics: {
+        Row: {
+          created_at: string
+          error_code: string | null
+          event_id: string | null
+          event_type: string | null
+          id: string
+          processing_ms: number | null
+          retries: number
+          status: string
+          tenant_id: string | null
+          worker_name: string
+        }
+        Insert: {
+          created_at?: string
+          error_code?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string
+          processing_ms?: number | null
+          retries?: number
+          status: string
+          tenant_id?: string | null
+          worker_name: string
+        }
+        Update: {
+          created_at?: string
+          error_code?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string
+          processing_ms?: number | null
+          retries?: number
+          status?: string
+          tenant_id?: string | null
+          worker_name?: string
+        }
+        Relationships: []
       }
     }
     Views: {
