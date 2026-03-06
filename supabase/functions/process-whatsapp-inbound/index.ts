@@ -36,14 +36,18 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
   const tenantId = event.tenant_id as string
   const phone = payload.phone as string
 
+  console.log(`[DEBUG-INBOUND] start event=${event.id} tenant=${tenantId} phone=${phone} inboundId=${inboundMessageId}`)
+
   if (!inboundMessageId || !tenantId || !phone) throw new Error('invalid_whatsapp_event_payload')
 
-  const { data: inbound } = await svc
+  const { data: inbound, error: inboundError } = await svc
     .from('inbound_messages')
     .select('id, instance_id, phone, payload_raw')
     .eq('id', inboundMessageId)
     .eq('tenant_id', tenantId)
     .maybeSingle()
+
+  console.log(`[DEBUG-INBOUND] inbound_messages lookup: found=${!!inbound} error=${inboundError?.message ?? 'none'}`)
 
   if (!inbound) throw new Error('inbound_message_not_found')
 
@@ -55,6 +59,7 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
   })
 
   const fenceToken = lockTokenResult.data as number | null
+  console.log(`[DEBUG-INBOUND] conversation_lock: fenceToken=${fenceToken} error=${lockTokenResult.error?.message ?? 'none'}`)
   if (!fenceToken) throw new Error('conversation_lock_busy')
 
   try {
@@ -65,9 +70,11 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
       .eq('user_id', tenantId)
       .maybeSingle()
 
+    console.log(`[DEBUG-INBOUND] instance lookup: found=${!!instance} instanceId=${inbound.instance_id}`)
     if (!instance) throw new Error('instance_not_found')
 
     const message = extractMessageText(inbound.payload_raw)
+    console.log(`[DEBUG-INBOUND] extractedMessage: ${message ? message.slice(0, 50) : 'NULL'}`)
     if (!message) return
 
     const ctx: RequestContext = {
@@ -81,10 +88,16 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
     }
 
     const verified = await isPhoneVerified(ctx)
+    console.log(`[DEBUG-INBOUND] isPhoneVerified: verified=${verified.verified} clienteId=${verified.clienteId}`)
+
     if (!verified.verified) {
+      console.log(`[DEBUG-INBOUND] entering auth flow`)
       const authResult = await handleAuthenticationFlow(ctx)
+      console.log(`[DEBUG-INBOUND] authResult: authenticated=${authResult.authenticated} clienteId=${authResult.clienteId}`)
       if (!authResult.authenticated || !authResult.clienteId) return
+      console.log(`[DEBUG-INBOUND] calling orchestrator after auth`)
       await handleIncomingMessage({ ...ctx, clienteId: authResult.clienteId })
+      console.log(`[DEBUG-INBOUND] orchestrator completed after auth`)
       return
     }
 
@@ -92,7 +105,9 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
     if (optInEnabled) return
 
     if (!verified.clienteId) throw new Error('verified_without_cliente')
+    console.log(`[DEBUG-INBOUND] calling orchestrator for verified contact clienteId=${verified.clienteId}`)
     await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
+    console.log(`[DEBUG-INBOUND] orchestrator completed for verified contact`)
   } finally {
     await svc.rpc('release_conversation_lock', {
       p_tenant_id: tenantId,
