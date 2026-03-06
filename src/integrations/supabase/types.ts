@@ -301,6 +301,63 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_logs: {
+        Row: {
+          created_at: string
+          direction: string
+          id: string
+          intent: string | null
+          message: string
+          phone_number: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          direction: string
+          id?: string
+          intent?: string | null
+          message: string
+          phone_number: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          id?: string
+          intent?: string | null
+          message?: string
+          phone_number?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      conversation_processing_locks: {
+        Row: {
+          fence_token: number
+          lease_until: string | null
+          phone: string
+          tenant_id: string
+          updated_at: string
+          worker_id: string | null
+        }
+        Insert: {
+          fence_token?: number
+          lease_until?: string | null
+          phone: string
+          tenant_id: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Update: {
+          fence_token?: number
+          lease_until?: string | null
+          phone?: string
+          tenant_id?: string
+          updated_at?: string
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       convites_vinculacao: {
         Row: {
           advogado_user_id: string
@@ -355,6 +412,63 @@ export type Database = {
           },
         ]
       }
+      domain_events: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_lettered_at: string | null
+          dedupe_key: string | null
+          event_type: string
+          id: string
+          last_error: string | null
+          lease_until: string | null
+          lease_version: number
+          next_retry_at: string | null
+          payload: Json
+          processed_at: string | null
+          processing_started_at: string | null
+          status: string
+          tenant_id: string
+          worker_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string | null
+          dedupe_key?: string | null
+          event_type: string
+          id?: string
+          last_error?: string | null
+          lease_until?: string | null
+          lease_version?: number
+          next_retry_at?: string | null
+          payload: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          status?: string
+          tenant_id: string
+          worker_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_lettered_at?: string | null
+          dedupe_key?: string | null
+          event_type?: string
+          id?: string
+          last_error?: string | null
+          lease_until?: string | null
+          lease_version?: number
+          next_retry_at?: string | null
+          payload?: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          status?: string
+          tenant_id?: string
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       email_verification_codes: {
         Row: {
           code: string
@@ -382,8 +496,47 @@ export type Database = {
         }
         Relationships: []
       }
+      inbound_messages: {
+        Row: {
+          created_at: string
+          id: string
+          instance_id: string
+          payload_raw: Json
+          phone: string
+          provider_message_id: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instance_id: string
+          payload_raw: Json
+          phone: string
+          provider_message_id: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instance_id?: string
+          payload_raw?: Json
+          phone?: string
+          provider_message_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inbound_messages_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_instancias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_outbox: {
         Row: {
+          accepted_reconciled_at: string | null
           aggregate_id: string | null
           aggregate_type: string
           attempts: number
@@ -403,6 +556,7 @@ export type Database = {
           worker_id: string | null
         }
         Insert: {
+          accepted_reconciled_at?: string | null
           aggregate_id?: string | null
           aggregate_type?: string
           attempts?: number
@@ -422,6 +576,7 @@ export type Database = {
           worker_id?: string | null
         }
         Update: {
+          accepted_reconciled_at?: string | null
           aggregate_id?: string | null
           aggregate_type?: string
           attempts?: number
@@ -524,6 +679,36 @@ export type Database = {
           tipo?: string
           titulo?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      process_consultation_audit_logs: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          id: string
+          intent: string
+          phone_number: string
+          process_id: string | null
+          tenant_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          intent: string
+          phone_number: string
+          process_id?: string | null
+          tenant_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          intent?: string
+          phone_number?: string
+          process_id?: string | null
+          tenant_id?: string
         }
         Relationships: []
       }
@@ -732,6 +917,72 @@ export type Database = {
           },
         ]
       }
+      whatsapp_contacts: {
+        Row: {
+          blocked_until: string | null
+          client_id: string | null
+          conversation_state: string
+          cpf_attempts: number
+          created_at: string
+          id: string
+          last_notification_sent_at: string | null
+          notifications_opt_in: boolean
+          otp_attempts: number
+          phone_number: string
+          process_id: string | null
+          tenant_id: string
+          updated_at: string
+          verified: boolean
+        }
+        Insert: {
+          blocked_until?: string | null
+          client_id?: string | null
+          conversation_state?: string
+          cpf_attempts?: number
+          created_at?: string
+          id?: string
+          last_notification_sent_at?: string | null
+          notifications_opt_in?: boolean
+          otp_attempts?: number
+          phone_number: string
+          process_id?: string | null
+          tenant_id: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Update: {
+          blocked_until?: string | null
+          client_id?: string | null
+          conversation_state?: string
+          cpf_attempts?: number
+          created_at?: string
+          id?: string
+          last_notification_sent_at?: string | null
+          notifications_opt_in?: boolean
+          otp_attempts?: number
+          phone_number?: string
+          process_id?: string | null
+          tenant_id?: string
+          updated_at?: string
+          verified?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_contacts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_contacts_process_id_fkey"
+            columns: ["process_id"]
+            isOneToOne: false
+            referencedRelation: "processos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_contatos: {
         Row: {
           created_at: string
@@ -856,11 +1107,59 @@ export type Database = {
           },
         ]
       }
+      worker_processing_metrics: {
+        Row: {
+          created_at: string
+          error_code: string | null
+          event_id: string | null
+          event_type: string | null
+          id: string
+          processing_ms: number | null
+          retries: number
+          status: string
+          tenant_id: string | null
+          worker_name: string
+        }
+        Insert: {
+          created_at?: string
+          error_code?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string
+          processing_ms?: number | null
+          retries?: number
+          status: string
+          tenant_id?: string | null
+          worker_name: string
+        }
+        Update: {
+          created_at?: string
+          error_code?: string | null
+          event_id?: string | null
+          event_type?: string | null
+          id?: string
+          processing_ms?: number | null
+          retries?: number
+          status?: string
+          tenant_id?: string | null
+          worker_name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      acquire_conversation_lock: {
+        Args: {
+          p_lease_seconds?: number
+          p_phone: string
+          p_tenant_id: string
+          p_worker_id: string
+        }
+        Returns: number
+      }
       claim_campaign_recipients: {
         Args: { p_batch_size?: number; p_campaign_job_id: string }
         Returns: {
@@ -885,7 +1184,100 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_domain_events: {
+        Args: {
+          p_batch_size?: number
+          p_event_types?: string[]
+          p_lease_seconds?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_lettered_at: string | null
+          dedupe_key: string | null
+          event_type: string
+          id: string
+          last_error: string | null
+          lease_until: string | null
+          lease_version: number
+          next_retry_at: string | null
+          payload: Json
+          processed_at: string | null
+          processing_started_at: string | null
+          status: string
+          tenant_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "domain_events"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      complete_domain_event: {
+        Args: {
+          p_event_id: string
+          p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      dead_letter_domain_event: {
+        Args: {
+          p_error: string
+          p_event_id: string
+          p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      purge_inbound_messages: {
+        Args: { p_retention_days?: number }
+        Returns: number
+      }
+      reconcile_stuck_outbox_accepted: {
+        Args: { p_age_minutes?: number; p_limit?: number }
+        Returns: number
+      }
+      record_worker_metric: {
+        Args: {
+          p_error_code?: string
+          p_event_id?: string
+          p_event_type?: string
+          p_processing_ms?: number
+          p_retries?: number
+          p_status: string
+          p_tenant_id?: string
+          p_worker_name: string
+        }
+        Returns: undefined
+      }
+      release_conversation_lock: {
+        Args: {
+          p_fence_token: number
+          p_phone: string
+          p_tenant_id: string
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      reschedule_domain_event_retry: {
+        Args: {
+          p_error: string
+          p_event_id: string
+          p_lease_version: number
+          p_next_retry_at: string
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      run_outbox_worker_cron: { Args: never; Returns: undefined }
       run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
+      run_process_domain_events_cron: { Args: never; Returns: undefined }
+      run_process_whatsapp_inbound_cron: { Args: never; Returns: undefined }
+      run_sync_movements_cron: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
