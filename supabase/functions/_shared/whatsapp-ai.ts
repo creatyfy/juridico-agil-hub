@@ -130,7 +130,7 @@ export async function classifyIntent(message: string): Promise<Intent> {
   }
 
   // Fallback to OpenAI
-  const openaiResult = await callOpenAI(CLASSIFY_SYSTEM_PROMPT, prompt)
+  const openaiResult = await callOpenAI(CLASSIFY_SYSTEM_PROMPT, prompt, 0, true)
   if (openaiResult) {
     const intent = parseIntentFromResponse(openaiResult)
     if (intent) return intent
