@@ -44,6 +44,27 @@ export type Database = {
         }
         Relationships: []
       }
+      app_config: {
+        Row: {
+          created_at: string
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       audit_logs: {
         Row: {
           action: string
@@ -1233,6 +1254,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      get_app_config: { Args: { p_key: string }; Returns: string }
       purge_inbound_messages: {
         Args: { p_retention_days?: number }
         Returns: number
