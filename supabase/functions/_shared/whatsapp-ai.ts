@@ -44,7 +44,7 @@ async function callAnthropic(systemPrompt: string, userMessage: string, maxToken
 }
 
 // --- OpenAI API ---
-async function callOpenAI(systemPrompt: string, userMessage: string, temperature = 0): Promise<string | null> {
+async function callOpenAI(systemPrompt: string, userMessage: string, temperature = 0, jsonMode = false): Promise<string | null> {
   if (!OPENAI_API_KEY) return null
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -56,7 +56,7 @@ async function callOpenAI(systemPrompt: string, userMessage: string, temperature
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         temperature,
-        response_format: { type: 'json_object' },
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
@@ -130,7 +130,7 @@ export async function classifyIntent(message: string): Promise<Intent> {
   }
 
   // Fallback to OpenAI
-  const openaiResult = await callOpenAI(CLASSIFY_SYSTEM_PROMPT, prompt)
+  const openaiResult = await callOpenAI(CLASSIFY_SYSTEM_PROMPT, prompt, 0, true)
   if (openaiResult) {
     const intent = parseIntentFromResponse(openaiResult)
     if (intent) return intent
