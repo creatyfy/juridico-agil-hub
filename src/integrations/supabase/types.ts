@@ -1025,6 +1025,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acquire_conversation_lock: {
+        Args: {
+          p_lease_seconds?: number
+          p_phone: string
+          p_tenant_id: string
+          p_worker_id: string
+        }
+        Returns: number
+      }
       claim_campaign_recipients: {
         Args: { p_batch_size?: number; p_campaign_job_id: string }
         Returns: {
@@ -1049,7 +1058,97 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_domain_events: {
+        Args: {
+          p_batch_size?: number
+          p_event_types?: string[]
+          p_lease_seconds?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_lettered_at: string | null
+          dedupe_key: string | null
+          event_type: string
+          id: string
+          last_error: string | null
+          lease_until: string | null
+          lease_version: number
+          next_retry_at: string | null
+          payload: Json
+          processed_at: string | null
+          processing_started_at: string | null
+          status: string
+          tenant_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "domain_events"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      complete_domain_event: {
+        Args: {
+          p_event_id: string
+          p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      dead_letter_domain_event: {
+        Args: {
+          p_error: string
+          p_event_id: string
+          p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      purge_inbound_messages: {
+        Args: { p_retention_days?: number }
+        Returns: number
+      }
+      reconcile_stuck_outbox_accepted: {
+        Args: { p_age_minutes?: number; p_limit?: number }
+        Returns: number
+      }
+      record_worker_metric: {
+        Args: {
+          p_error_code?: string
+          p_event_id?: string
+          p_event_type?: string
+          p_processing_ms?: number
+          p_retries?: number
+          p_status: string
+          p_tenant_id?: string
+          p_worker_name: string
+        }
+        Returns: undefined
+      }
+      release_conversation_lock: {
+        Args: {
+          p_fence_token: number
+          p_phone: string
+          p_tenant_id: string
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      reschedule_domain_event_retry: {
+        Args: {
+          p_error: string
+          p_event_id: string
+          p_lease_version: number
+          p_next_retry_at: string
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
       run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
+      run_sync_movements_cron: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
