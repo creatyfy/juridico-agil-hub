@@ -137,7 +137,7 @@ export default function VincularWhatsApp() {
       const { data: result, error } = await supabase.functions.invoke('vinculacao-whatsapp', {
         body: {
           action: 'verify-otp',
-          convite_id: data.convite.id,
+          token,
           codigo: otpCode,
         },
       });
