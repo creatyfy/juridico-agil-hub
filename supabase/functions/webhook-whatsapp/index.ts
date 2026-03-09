@@ -68,8 +68,8 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, correlation_id: correlationId, error: 'unauthorized_webhook' }, 401)
     }
 
-    if (webhookValidation.reason === 'hmac_skipped_no_headers') {
-      logError('webhook_hmac_not_present', { instanceName, correlationId })
+    if (webhookValidation.reason === 'hmac_skipped_no_headers' || webhookValidation.reason === 'hmac_skipped_no_secret') {
+      logError('webhook_hmac_not_present', { instanceName, correlationId, reason: webhookValidation.reason })
     }
 
     const { data: instance } = await supabase

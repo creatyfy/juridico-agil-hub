@@ -33,12 +33,24 @@ async function reserveNonce(supabase: SupabaseClient, nonce: string, timestamp: 
 
 export async function validateWebhookSignature(input: WebhookValidationInput): Promise<{ valid: boolean; reason?: string }> {
   const secret = Deno.env.get('WEBHOOK_HMAC_SECRET')
-  if (!secret) return { valid: false, reason: 'webhook_secret_not_configured' }
-
   const timestampHeader = input.req.headers.get('x-webhook-timestamp')
   const nonce = input.req.headers.get('x-webhook-nonce')
   const incomingSignature = input.req.headers.get('x-webhook-signature')
 
+  // Se não tem secret configurado
+  if (!secret) {
+    if (!timestampHeader && !nonce && !incomingSignature) {
+      // Evolution API sem HMAC — aceitar em modo compatibilidade
+      console.warn('[webhook-security] no secret configured and no hmac headers; accepting request', {
+        instance_name: input.instanceName,
+        reason: 'hmac_skipped_no_secret',
+      })
+      return { valid: true, reason: 'hmac_skipped_no_secret' }
+    }
+    return { valid: false, reason: 'webhook_secret_not_configured' }
+  }
+
+  // Se tem secret mas não tem headers HMAC, aceitar em modo compatibilidade
   if (!timestampHeader && !nonce && !incomingSignature) {
     console.warn('[webhook-security] hmac headers not present; skipping signature validation for compatibility', {
       instance_name: input.instanceName,
