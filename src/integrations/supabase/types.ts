@@ -956,6 +956,7 @@ export type Database = {
           created_at: string
           id: string
           last_notification_sent_at: string | null
+          metadata: Json
           notifications_opt_in: boolean
           otp_attempts: number
           phone_number: string
@@ -972,6 +973,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_notification_sent_at?: string | null
+          metadata?: Json
           notifications_opt_in?: boolean
           otp_attempts?: number
           phone_number: string
@@ -988,6 +990,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_notification_sent_at?: string | null
+          metadata?: Json
           notifications_opt_in?: boolean
           otp_attempts?: number
           phone_number?: string
