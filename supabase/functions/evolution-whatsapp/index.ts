@@ -141,8 +141,8 @@ Deno.serve(async (req) => {
             foto: c.profilePicUrl || c.profilePictureUrl || null,
           })
         } else {
-          if (!existing.pushName && pushName) existing.pushName = pushName
-          if (!existing.name && (chatName || subject)) existing.name = chatName || subject || null
+          if (pushName) existing.pushName = pushName
+          if (chatName || subject) existing.name = existing.name || chatName || subject || null
           if (!existing.foto && (c.profilePicUrl || c.profilePictureUrl)) existing.foto = c.profilePicUrl || c.profilePictureUrl
         }
       }
