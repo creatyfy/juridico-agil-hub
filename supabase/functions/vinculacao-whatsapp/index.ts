@@ -15,6 +15,56 @@ function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+/** Resolve invite: accept either invite_id (short URL) or token (legacy JWT URL) */
+async function resolveInvite(svc: any, body: any, inviteSecret: string) {
+  const { invite_id, token } = body;
+
+  if (invite_id) {
+    // Short URL mode: look up invite by UUID, get stored JWT token
+    const { data: convite, error } = await svc
+      .from("convites_vinculacao")
+      .select("*, clientes(id, nome, documento, tipo_documento, numero_whatsapp, status_vinculo), processos(id, numero_cnj, classe, tribunal)")
+      .eq("id", invite_id)
+      .maybeSingle();
+
+    if (error || !convite) return { error: "Convite não encontrado", status: 404 };
+
+    // Verify the stored JWT
+    const storedToken = convite.token;
+    let claims;
+    try {
+      claims = await verifyInviteJwt(storedToken, inviteSecret);
+    } catch {
+      return { error: "Token do convite inválido", status: 401 };
+    }
+
+    return { convite, claims, token: storedToken };
+  }
+
+  if (token) {
+    // Legacy mode: JWT passed directly in request
+    let claims;
+    try {
+      claims = await verifyInviteJwt(token, inviteSecret);
+    } catch {
+      return { error: "Token inválido", status: 401 };
+    }
+
+    const { data: convite, error } = await svc
+      .from("convites_vinculacao")
+      .select("*, clientes(id, nome, documento, tipo_documento, numero_whatsapp, status_vinculo), processos(id, numero_cnj, classe, tribunal)")
+      .eq("id", claims.invite_id)
+      .eq("cliente_id", claims.cliente_id)
+      .eq("token", token)
+      .maybeSingle();
+
+    if (error || !convite) return { error: "Convite não encontrado", status: 404 };
+    return { convite, claims, token };
+  }
+
+  return { error: "Token ou ID obrigatório", status: 400 };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -26,25 +76,19 @@ Deno.serve(async (req) => {
     const svc = createClient(supabaseUrl, serviceKey);
 
     const body = await req.json();
-    const { action, token } = body;
+    const { action } = body;
 
-    if (!token) return json({ error: "Token obrigatório" }, 400);
-    const claims = await verifyInviteJwt(token, inviteSecret);
+    const resolved = await resolveInvite(svc, body, inviteSecret);
+    if ("error" in resolved && !("convite" in resolved)) {
+      return json({ error: resolved.error }, resolved.status);
+    }
 
-    const { data: convite, error } = await svc
-      .from("convites_vinculacao")
-      .select("*, clientes(id, nome, documento, tipo_documento, numero_whatsapp, status_vinculo), processos(id, numero_cnj, classe, tribunal)")
-      .eq("id", claims.invite_id)
-      .eq("cliente_id", claims.cliente_id)
-      .eq("token", token)
-      .maybeSingle();
+    const { convite, claims, token } = resolved as { convite: any; claims: any; token: string };
 
-    if (error || !convite) return json({ error: "Convite não encontrado" }, 404);
     assertTenantScope(convite.advogado_user_id, claims.tenant_id);
 
     if (convite.invite_nonce !== claims.nonce) return json({ error: "Convite inválido" }, 401);
     if (convite.token_expires_at && new Date(convite.token_expires_at).getTime() + 30000 < Date.now()) return json({ error: "Convite expirado" }, 410);
-
 
     if (action === "fetch") {
       return json({

@@ -156,9 +156,9 @@ export default function ClienteDetail() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      if (data?.token) {
+      if (data?.id) {
         const publishedUrl = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
-        const link = `${publishedUrl}/vincular?token=${data.token}`;
+        const link = `${publishedUrl}/vincular?id=${data.id}`;
         setVinculacaoLink(link);
         toast.success('Link de vinculação gerado!');
       }

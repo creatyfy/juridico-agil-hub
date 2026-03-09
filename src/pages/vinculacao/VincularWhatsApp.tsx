@@ -18,7 +18,9 @@ type Step = 'loading' | 'error' | 'already-used' | 'info' | 'otp' | 'success';
 
 export default function VincularWhatsApp() {
   const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // Support both ?id=UUID (short) and legacy ?token=JWT (long)
+  const inviteId = searchParams.get('id');
+  const legacyToken = searchParams.get('token');
 
   const [step, setStep] = useState<Step>('loading');
   const [data, setData] = useState<ConviteData | null>(null);
@@ -33,15 +35,17 @@ export default function VincularWhatsApp() {
 
   useEffect(() => {
     async function fetchConvite() {
-      if (!token) {
-        setErrorMsg('Token não fornecido.');
+      if (!inviteId && !legacyToken) {
+        setErrorMsg('Link inválido.');
         setStep('error');
         return;
       }
 
-      const { data: result, error } = await supabase.functions.invoke('vinculacao-whatsapp', {
-        body: { action: 'fetch', token },
-      });
+      const body: Record<string, string> = { action: 'fetch' };
+      if (inviteId) body.invite_id = inviteId;
+      else if (legacyToken) body.token = legacyToken;
+
+      const { data: result, error } = await supabase.functions.invoke('vinculacao-whatsapp', { body });
 
       if (error || !result) {
         setErrorMsg('Convite não encontrado ou inválido.');
@@ -67,7 +71,7 @@ export default function VincularWhatsApp() {
       }
     }
     fetchConvite();
-  }, [token]);
+  }, [inviteId, legacyToken]);
 
   // Resend timer
   useEffect(() => {
@@ -86,6 +90,13 @@ export default function VincularWhatsApp() {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
   };
 
+  const buildBody = (action: string, extra: Record<string, string> = {}) => {
+    const body: Record<string, string> = { action, ...extra };
+    if (inviteId) body.invite_id = inviteId;
+    else if (legacyToken) body.token = legacyToken;
+    return body;
+  };
+
   const handleSendOtp = async () => {
     const cleanNumber = numero.replace(/\D/g, '');
     if (cleanNumber.length < 10 || cleanNumber.length > 11) {
@@ -101,11 +112,7 @@ export default function VincularWhatsApp() {
     setSendingOtp(true);
     try {
       const { data: result, error } = await supabase.functions.invoke('vinculacao-whatsapp', {
-        body: {
-          action: 'send-otp',
-          token,
-          numero_whatsapp: cleanNumber,
-        },
+        body: buildBody('send-otp', { numero_whatsapp: cleanNumber }),
       });
 
       if (error) throw error;
@@ -135,11 +142,7 @@ export default function VincularWhatsApp() {
     setVerifying(true);
     try {
       const { data: result, error } = await supabase.functions.invoke('vinculacao-whatsapp', {
-        body: {
-          action: 'verify-otp',
-          token,
-          codigo: otpCode,
-        },
+        body: buildBody('verify-otp', { codigo: otpCode }),
       });
 
       if (error) throw error;
@@ -163,7 +166,6 @@ export default function VincularWhatsApp() {
     await handleSendOtp();
   };
 
-  // ─── LOADING ───
   if (step === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -172,7 +174,6 @@ export default function VincularWhatsApp() {
     );
   }
 
-  // ─── ERROR ───
   if (step === 'error') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -185,7 +186,6 @@ export default function VincularWhatsApp() {
     );
   }
 
-  // ─── ALREADY USED ───
   if (step === 'already-used') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -200,7 +200,6 @@ export default function VincularWhatsApp() {
     );
   }
 
-  // ─── SUCCESS ───
   if (step === 'success') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -218,7 +217,6 @@ export default function VincularWhatsApp() {
     );
   }
 
-  // ─── OTP INPUT ───
   if (step === 'otp') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -265,7 +263,6 @@ export default function VincularWhatsApp() {
     );
   }
 
-  // ─── INFO + NUMBER INPUT ───
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="bg-card rounded-xl border p-8 max-w-md w-full space-y-6">
