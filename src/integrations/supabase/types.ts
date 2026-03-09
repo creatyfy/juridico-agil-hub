@@ -568,6 +568,7 @@ export type Database = {
           id: string
           idempotency_key: string
           lease_until: string | null
+          lease_version: number
           next_retry_at: string | null
           payload: Json
           provider_message_id: string | null
@@ -588,6 +589,7 @@ export type Database = {
           id?: string
           idempotency_key: string
           lease_until?: string | null
+          lease_version?: number
           next_retry_at?: string | null
           payload?: Json
           provider_message_id?: string | null
@@ -608,6 +610,7 @@ export type Database = {
           id?: string
           idempotency_key?: string
           lease_until?: string | null
+          lease_version?: number
           next_retry_at?: string | null
           payload?: Json
           provider_message_id?: string | null
@@ -1169,7 +1172,17 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_whatsapp_operational_metrics: {
+        Row: {
+          avg_backlog_age_seconds: number | null
+          backlog_count: number | null
+          dead_letter_rate_percent: number | null
+          retry_rate_percent: number | null
+          success_rate_percent: number | null
+          tenant_id: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       acquire_conversation_lock: {
@@ -1237,10 +1250,58 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_message_outbox_with_lease: {
+        Args: {
+          p_batch_size?: number
+          p_instance_capacity?: number
+          p_instance_refill_per_second?: number
+          p_lease_seconds?: number
+          p_tenant_capacity?: number
+          p_tenant_refill_per_second?: number
+          p_worker_id?: string
+        }
+        Returns: {
+          accepted_reconciled_at: string | null
+          aggregate_id: string | null
+          aggregate_type: string
+          attempts: number
+          campaign_job_id: string | null
+          created_at: string
+          dead_lettered_at: string | null
+          delivered_at: string | null
+          id: string
+          idempotency_key: string
+          lease_until: string | null
+          lease_version: number
+          next_retry_at: string | null
+          payload: Json
+          provider_message_id: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "message_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       complete_domain_event: {
         Args: {
           p_event_id: string
           p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
+      complete_outbox_accepted: {
+        Args: {
+          p_id: string
+          p_lease_version: number
+          p_provider_message_id: string
+          p_provider_response?: Json
           p_worker_id: string
         }
         Returns: boolean
@@ -1255,8 +1316,21 @@ export type Database = {
         Returns: boolean
       }
       get_app_config: { Args: { p_key: string }; Returns: string }
+      move_outbox_dead_letter: {
+        Args: {
+          p_error: string
+          p_id: string
+          p_lease_version: number
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
       purge_inbound_messages: {
         Args: { p_retention_days?: number }
+        Returns: number
+      }
+      reap_orphaned_outbox_messages: {
+        Args: { p_limit?: number; p_retry_delay_seconds?: number }
         Returns: number
       }
       reconcile_stuck_outbox_accepted: {
@@ -1275,6 +1349,10 @@ export type Database = {
           p_worker_name: string
         }
         Returns: undefined
+      }
+      register_outbox_attempt: {
+        Args: { p_lease_version: number; p_outbox_id: string }
+        Returns: boolean
       }
       release_conversation_lock: {
         Args: {
@@ -1295,11 +1373,31 @@ export type Database = {
         }
         Returns: boolean
       }
+      reschedule_outbox_retry: {
+        Args: {
+          p_error: string
+          p_id: string
+          p_lease_version: number
+          p_next_retry_at: string
+          p_worker_id: string
+        }
+        Returns: boolean
+      }
       run_outbox_worker_cron: { Args: never; Returns: undefined }
       run_process_campaign_jobs_cron: { Args: never; Returns: undefined }
       run_process_domain_events_cron: { Args: never; Returns: undefined }
       run_process_whatsapp_inbound_cron: { Args: never; Returns: undefined }
       run_sync_movements_cron: { Args: never; Returns: undefined }
+      update_process_movement_notification_status: {
+        Args: {
+          p_attempts?: number
+          p_last_error?: string
+          p_outbox_id: string
+          p_status: string
+          p_tenant_id: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
