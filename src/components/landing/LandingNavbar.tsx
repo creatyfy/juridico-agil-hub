@@ -21,7 +21,7 @@ export default function LandingNavbar() {
     >
       <div className="container mx-auto flex items-center justify-between h-16 px-4 md:px-8">
         <Link to="/">
-          <img src={logo} alt="Jarvis Jud" className="h-20 drop-shadow-lg" />
+          <img src={logo} alt="Jarvis Jud" className="h-28 drop-shadow-lg" />
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
