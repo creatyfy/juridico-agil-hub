@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Scale } from 'lucide-react';
+import logo from '@/assets/logo-jarvis-jud.png';
 import { Button } from '@/components/ui/button';
 
 export default function LandingNavbar() {
@@ -19,11 +20,8 @@ export default function LandingNavbar() {
       }`}
     >
       <div className="container mx-auto flex items-center justify-between h-16 px-4 md:px-8">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#3a7dff] to-[#00d4ff] flex items-center justify-center">
-            <Scale className="h-4 w-4 text-white" />
-          </div>
-          <span className="text-lg font-extrabold text-white tracking-tight">JUD</span>
+        <Link to="/">
+          <img src={logo} alt="Jarvis Jud" className="h-20 drop-shadow-lg" />
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
