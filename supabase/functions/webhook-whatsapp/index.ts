@@ -207,20 +207,29 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Update whatsapp_chats_cache
-      const contactName = item.pushName || item.verifiedBizName || phone
+      // Update whatsapp_chats_cache — preserve existing name
       const now = new Date().toISOString()
+
+      const { data: existingChat } = await supabase
+        .from('whatsapp_chats_cache')
+        .select('nome')
+        .eq('instancia_id', instance.id)
+        .eq('remote_jid', rawJid)
+        .maybeSingle()
+
+      const resolvedName = existingChat?.nome && existingChat.nome !== phone
+        ? existingChat.nome
+        : (item.pushName || item.verifiedBizName || phone)
 
       const { error: cacheError } = await supabase
         .from('whatsapp_chats_cache')
         .upsert({
           instancia_id: instance.id,
           remote_jid: rawJid,
-          nome: contactName,
+          nome: resolvedName,
           ultima_mensagem: incomingText.slice(0, 200),
           ultimo_timestamp: now,
           direcao: isFromMe ? 'out' : 'in',
-          nao_lidas: isFromMe ? 0 : 1,
           updated_at: now,
         }, { onConflict: 'instancia_id,remote_jid' })
 

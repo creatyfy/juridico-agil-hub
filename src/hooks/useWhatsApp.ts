@@ -380,7 +380,7 @@ export function useWhatsApp() {
         const newMsg = payload.new as any;
         const currentChat = selectedChatRef.current;
 
-        if (newMsg.direcao === 'in') {
+        if (newMsg.direcao === 'in' && newMsg.remote_jid !== currentChat) {
           const chatName = chats.find(c => c.remote_jid === newMsg.remote_jid)?.nome
             || newMsg.remote_jid.replace('@s.whatsapp.net', '');
           const preview = (newMsg.conteudo || '[mídia]').slice(0, 80);
