@@ -76,6 +76,7 @@ Deno.serve(async (req) => {
     const svc = createClient(supabaseUrl, serviceKey);
 
     const body = await req.json();
+    console.log('[vinculacao] action:', body?.action, 'invite_id:', body?.invite_id);
     const { action } = body;
 
     const resolved = await resolveInvite(svc, body, inviteSecret);
