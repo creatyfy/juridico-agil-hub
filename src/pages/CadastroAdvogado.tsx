@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Link } from 'react-router-dom';
-import { Check, ChevronRight, ChevronLeft, Search, Shield, Eye, EyeOff, Mail, AlertCircle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Check, ChevronRight, ChevronLeft, Search, Shield, Eye, EyeOff, Mail, AlertCircle, Loader2, CheckCircle2, XCircle, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
