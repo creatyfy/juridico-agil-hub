@@ -270,7 +270,7 @@ Deno.serve(async (req) => {
           continue
         }
 
-        await supabase.from('domain_events').upsert({
+        const { error: domainEventError } = await supabase.from('domain_events').insert({
           tenant_id: instance.user_id,
           event_type: 'WHATSAPP_MESSAGE_RECEIVED',
           dedupe_key: `${instance.id}:${providerMessageId}`,
@@ -282,7 +282,19 @@ Deno.serve(async (req) => {
             phone,
             message_preview: incomingText.slice(0, 80),
           },
-        }, { onConflict: 'tenant_id,event_type,dedupe_key', ignoreDuplicates: true })
+        })
+
+        if (domainEventError) {
+          // Log but don't fail — duplicate key (23505) is expected for retries
+          if (!domainEventError.message?.includes('duplicate') && !domainEventError.code?.includes('23505')) {
+            logError('domain_event_insert_failed', {
+              correlation_id: correlationId,
+              tenant_id: instance.user_id,
+              error: domainEventError.message,
+              code: domainEventError.code,
+            })
+          }
+        }
       }
 
       logInfo('whatsapp_inbound_event_enqueued', {
