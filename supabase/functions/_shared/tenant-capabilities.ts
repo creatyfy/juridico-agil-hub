@@ -37,6 +37,7 @@ const DEFAULT_CAPABILITIES: TenantCapabilities = {
     lembrete_monitoramento: true,
     whatsapp_chat: true,
     importacao_processos: true,
+    secretariado: true,
   },
 };
 
