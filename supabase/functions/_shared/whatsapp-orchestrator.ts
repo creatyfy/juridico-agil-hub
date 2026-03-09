@@ -1,5 +1,5 @@
 // @ts-nocheck - Deno edge function
-import { classifyIntent, generateContextualResponse } from './whatsapp-ai.ts'
+import { classifyIntent, generateContextualResponse, callAIWithFallback } from './whatsapp-ai.ts'
 import type { ClienteInfo, ProcessoInfo } from './whatsapp-ai.ts'
 import { enqueueWhatsAppText } from './whatsapp-outbox.ts'
 import { logError, logInfo } from './whatsapp-logger.ts'
@@ -104,91 +104,111 @@ async function handleUnregisteredContact(ctx: RequestContext & { clienteId: stri
       await enqueueWhatsAppText(ctx, 'CPF inválido. Por favor, informe os 11 números do seu CPF.', 'orchestrator', `cpf_invalid:${ctx.phone}:${ctx.requestId}`)
       return
     }
-
     const { data: cliente } = await ctx.supabase
       .from('clientes')
-      .select('id, nome, numero_whatsapp')
+      .select('id, nome')
       .eq('user_id', ctx.tenantId)
       .eq('documento', cpf)
       .maybeSingle()
 
     if (!cliente) {
-      await enqueueWhatsAppText(ctx, 'Não encontrei nenhum cadastro com esse CPF. Entre em contato com o escritório para mais informações.', 'orchestrator', `cpf_notfound:${ctx.phone}:${ctx.requestId}`)
       await ctx.supabase.from('whatsapp_contacts').upsert({
-        tenant_id: ctx.tenantId,
-        phone_number: ctx.phone,
-        conversation_state: 'IDLE',
-        metadata: {},
+        tenant_id: ctx.tenantId, phone_number: ctx.phone,
+        conversation_state: 'IDLE', metadata: {}
       }, { onConflict: 'tenant_id,phone_number' })
+      await enqueueWhatsAppText(ctx, 'Não encontrei nenhum cadastro com esse CPF. Se precisar de ajuda, entre em contato diretamente com o escritório.', 'orchestrator', `cpf_notfound:${ctx.phone}:${ctx.requestId}`)
       return
     }
 
-    // Found — ask to link
     await ctx.supabase.from('whatsapp_contacts').upsert({
-      tenant_id: ctx.tenantId,
-      phone_number: ctx.phone,
+      tenant_id: ctx.tenantId, phone_number: ctx.phone,
       conversation_state: 'AWAITING_LINK_CONFIRM',
-      metadata: { pending_cliente_id: cliente.id, pending_cliente_nome: cliente.nome },
+      metadata: { pending_cliente_id: cliente.id, pending_cliente_nome: cliente.nome }
     }, { onConflict: 'tenant_id,phone_number' })
-
-    await enqueueWhatsAppText(
-      ctx,
-      `Encontrei seu cadastro, *${cliente.nome}*! Deseja vincular este número WhatsApp ao seu cadastro para receber atualizações automáticas dos seus processos? Responda *SIM* para confirmar.`,
-      'orchestrator',
-      `cpf_found:${ctx.phone}:${ctx.requestId}`,
-    )
+    await enqueueWhatsAppText(ctx, `Encontrei seu cadastro, *${cliente.nome}*! Deseja vincular este número ao seu cadastro para receber atualizações dos seus processos? Responda *SIM* para confirmar.`, 'orchestrator', `cpf_found:${ctx.phone}:${ctx.requestId}`)
     return
   }
 
   // State: waiting for link confirmation
   if (conversationState === 'AWAITING_LINK_CONFIRM') {
     const answer = ctx.message.trim().toLowerCase()
-    if (answer === 'sim' || answer === 'sim.' || answer === 's') {
+    if (['sim', 'sim.', 's', 'yes', 'quero', 'pode'].includes(answer)) {
       const pendingClienteId = metadata?.pending_cliente_id
       if (pendingClienteId) {
         await ctx.supabase.from('clientes').update({ numero_whatsapp: ctx.phone, status_vinculo: 'ativo' }).eq('id', pendingClienteId)
         await ctx.supabase.from('whatsapp_contacts').upsert({
-          tenant_id: ctx.tenantId,
-          phone_number: ctx.phone,
-          conversation_state: 'IDLE',
-          verified: true,
-          client_id: pendingClienteId,
-          metadata: {},
+          tenant_id: ctx.tenantId, phone_number: ctx.phone,
+          conversation_state: 'IDLE', verified: true,
+          client_id: pendingClienteId, metadata: {}
         }, { onConflict: 'tenant_id,phone_number' })
-        await enqueueWhatsAppText(ctx, 'Número vinculado com sucesso! ✅ A partir de agora você receberá atualizações dos seus processos aqui. Em que posso ajudar?', 'orchestrator', `linked:${ctx.phone}:${ctx.requestId}`)
+        await enqueueWhatsAppText(ctx, 'Número vinculado com sucesso! ✅ Você receberá atualizações dos seus processos por aqui. Em que posso ajudar?', 'orchestrator', `linked:${ctx.phone}:${ctx.requestId}`)
       }
     } else {
       await ctx.supabase.from('whatsapp_contacts').upsert({
-        tenant_id: ctx.tenantId,
-        phone_number: ctx.phone,
-        conversation_state: 'IDLE',
-        metadata: {},
+        tenant_id: ctx.tenantId, phone_number: ctx.phone,
+        conversation_state: 'IDLE', metadata: {}
       }, { onConflict: 'tenant_id,phone_number' })
       await enqueueWhatsAppText(ctx, 'Tudo bem! Se precisar de ajuda, é só me chamar.', 'orchestrator', `link_declined:${ctx.phone}:${ctx.requestId}`)
     }
     return
   }
 
-  // Default IDLE state for unregistered contact — ask CPF
-  await enqueueWhatsAppText(
-    ctx,
-    'Olá! Para consultar informações sobre seus processos, preciso identificar seu cadastro. Por favor, informe seu *CPF* (somente números).',
-    'orchestrator',
-    `ask_cpf:${ctx.phone}:${ctx.requestId}`,
-  )
-  await ctx.supabase.from('whatsapp_contacts').upsert({
+  // IDLE state: classify intent first, only ask CPF if PROCESS_STATUS
+  const intent = await classifyIntent(ctx.message)
+
+  logInfo('orchestrator_unregistered_intent', {
+    request_id: ctx.requestId,
     tenant_id: ctx.tenantId,
-    phone_number: ctx.phone,
-    conversation_state: 'AWAITING_CPF',
-    metadata: {},
-  }, { onConflict: 'tenant_id,phone_number' })
+    telefone: ctx.phone,
+    intent,
+  })
+
+  if (intent === 'PROCESS_STATUS') {
+    await ctx.supabase.from('whatsapp_contacts').upsert({
+      tenant_id: ctx.tenantId, phone_number: ctx.phone,
+      conversation_state: 'AWAITING_CPF', metadata: {}
+    }, { onConflict: 'tenant_id,phone_number' })
+    await enqueueWhatsAppText(ctx, 'Para consultar seu processo, preciso identificar seu cadastro. Por favor, informe seu *CPF* (somente números).', 'orchestrator', `ask_cpf:${ctx.phone}:${ctx.requestId}`)
+    return
+  }
+
+  if (intent === 'HUMAN_SUPPORT') {
+    await enqueueWhatsAppText(ctx, 'Claro! Vou encaminhar seu contato para um de nossos advogados. Em breve alguém entrará em contato com você.', 'orchestrator', `human_unregistered:${ctx.phone}:${ctx.requestId}`)
+    await registerEscalation(ctx, null, 'HUMAN_SUPPORT_UNREGISTERED', { phone: ctx.phone })
+    return
+  }
+
+  if (intent === 'NEW_CLIENT') {
+    await enqueueWhatsAppText(ctx, 'Obrigado pelo contato! Vou registrar seu interesse e nossa equipe entrará em contato em breve para dar início ao atendimento.', 'orchestrator', `new_client_unregistered:${ctx.phone}:${ctx.requestId}`)
+    await registerEscalation(ctx, null, 'NEW_CLIENT', { phone: ctx.phone })
+    return
+  }
+
+  if (intent === 'OPT_OUT') {
+    await enqueueWhatsAppText(ctx, 'Entendido! Você não receberá mais mensagens automáticas deste número.', 'orchestrator', `optout_unregistered:${ctx.phone}:${ctx.requestId}`)
+    return
+  }
+
+  // OTHER / general conversation — use AI to respond naturally, no CPF
+  const systemPrompt = `Você é um assistente virtual de um escritório de advocacia respondendo via WhatsApp.
+O contato ainda não tem cadastro no sistema.
+REGRAS:
+- Responda de forma cordial e natural ao que foi dito
+- NÃO peça CPF a menos que o cliente pergunte sobre processos
+- NÃO invente informações jurídicas
+- Se não souber responder, diga que pode encaminhar para um advogado
+- Máximo 3 frases curtas
+- Tom humano, acolhedor e profissional`
+
+  const aiResponse = await callAIWithFallback(systemPrompt, ctx.message)
+  await enqueueWhatsAppText(ctx, aiResponse, 'orchestrator', `general_unregistered:${ctx.phone}:${ctx.requestId}`)
 }
 
 export async function handleIncomingMessage(ctx: RequestContext & { clienteId: string }) {
   try {
     console.log(`[DEBUG-ORCH] handleIncomingMessage start clienteId=${ctx.clienteId} phone=${ctx.phone} msg="${ctx.message.slice(0, 30)}"`)
 
-    // Handle unregistered contacts with state machine
+    // Handle unregistered contacts with intent-driven state machine
     if (ctx.clienteId === 'sem_cadastro') {
       await logConversation(ctx, 'inbound', ctx.message)
       await handleUnregisteredContact(ctx)
