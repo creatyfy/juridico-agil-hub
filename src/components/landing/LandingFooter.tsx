@@ -1,5 +1,5 @@
-import { Scale } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import logo from '@/assets/logo-jarvis-jud.png';
 
 const links = {
   Produto: ['Funcionalidades', 'Planos', 'Integrações', 'Atualizações'],
@@ -14,11 +14,8 @@ export default function LandingFooter() {
         <div className="grid md:grid-cols-5 gap-12">
           {/* Brand */}
           <div className="md:col-span-2">
-            <Link to="/" className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#3a7dff] to-[#00d4ff] flex items-center justify-center">
-                <Scale className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-lg font-extrabold text-white tracking-tight">JUD</span>
+            <Link to="/" className="inline-block mb-4">
+              <img src={logo} alt="Jarvis Jud" className="h-20 drop-shadow-lg" />
             </Link>
             <p className="text-sm text-white/30 leading-relaxed max-w-xs">
               Plataforma jurídica inteligente para escritórios de advocacia que valorizam produtividade e excelência no atendimento.
