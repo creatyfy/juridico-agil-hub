@@ -396,15 +396,7 @@ export function useWhatsApp() {
         if (currentChat && newMsg.remote_jid === currentChat) {
           setMessages(prev => {
             if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) return prev;
-            if (newMsg.direcao === 'out') {
-              const recent = prev.filter(m =>
-                m.direcao === 'out' &&
-                m.conteudo === newMsg.conteudo &&
-                Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 10000
-              );
-              if (recent.length > 0) return prev;
-            }
-            return [...prev, {
+            const realMsg = {
               id: newMsg.id,
               remote_jid: newMsg.remote_jid,
               direcao: newMsg.direcao,
@@ -413,7 +405,21 @@ export function useWhatsApp() {
               timestamp: newMsg.timestamp,
               message_id: newMsg.message_id,
               status_entrega: newMsg.status_entrega ?? null,
-            }];
+            };
+            if (newMsg.direcao === 'out') {
+              const tempIndex = prev.findIndex(m =>
+                m.id.startsWith('temp_') &&
+                m.conteudo === newMsg.conteudo &&
+                m.remote_jid === newMsg.remote_jid &&
+                Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 15000
+              );
+              if (tempIndex !== -1) {
+                const updated = [...prev];
+                updated[tempIndex] = realMsg;
+                return updated;
+              }
+            }
+            return [...prev, realMsg];
           });
         }
       })
