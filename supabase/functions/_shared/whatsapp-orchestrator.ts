@@ -28,45 +28,35 @@ async function registerEscalation(ctx: RequestContext, clienteId: string | null,
 
 async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise<ClienteInfo> {
   if (!clienteId || clienteId === 'sem_cadastro') {
-    console.log(`[DEBUG-ORCH] fetchClienteInfo skip — clienteId="${clienteId}", returning generic info`)
     return { nome: 'Cliente', processos: [] }
   }
 
-  console.log(`[DEBUG-ORCH] fetchClienteInfo start clienteId=${clienteId} tenantId=${ctx.tenantId}`)
-
-  const { data: cliente, error: clienteError } = await ctx.supabase
+  const { data: cliente } = await ctx.supabase
     .from('clientes')
     .select('nome')
     .eq('id', clienteId)
     .eq('user_id', ctx.tenantId)
     .maybeSingle()
 
-  console.log(`[DEBUG-ORCH] clientes query: nome=${cliente?.nome ?? 'NULL'} error=${clienteError?.message ?? 'none'}`)
-
   const nome = cliente?.nome ?? 'Cliente'
 
-  const { data: bindings, error: bindingsError } = await ctx.supabase
+  const { data: bindings } = await ctx.supabase
     .from('cliente_processos')
     .select('processo_id')
     .eq('cliente_id', clienteId)
     .eq('status', 'ativo')
 
-  console.log(`[DEBUG-ORCH] cliente_processos query: count=${bindings?.length ?? 0} error=${bindingsError?.message ?? 'none'}`)
-
   const processoIds = (bindings ?? []).map((b: any) => b.processo_id).filter(Boolean)
 
   if (processoIds.length === 0) {
-    console.log(`[DEBUG-ORCH] no active processes found`)
     return { nome, processos: [] }
   }
 
-  const { data: processosData, error: processosError } = await ctx.supabase
+  const { data: processosData } = await ctx.supabase
     .from('processos')
     .select('id, numero_cnj, tribunal, vara, classe, assunto, status, data_distribuicao')
     .eq('user_id', ctx.tenantId)
     .in('id', processoIds)
-
-  console.log(`[DEBUG-ORCH] processos query: count=${processosData?.length ?? 0} error=${processosError?.message ?? 'none'}`)
 
   const processos: ProcessoInfo[] = []
 
@@ -77,8 +67,6 @@ async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise
       .eq('processo_id', proc.id)
       .order('data_movimentacao', { ascending: false })
       .limit(5)
-
-    console.log(`[DEBUG-ORCH] movimentacoes for ${proc.numero_cnj}: count=${movs?.length ?? 0}`)
 
     processos.push({
       numero_cnj: proc.numero_cnj,
@@ -98,11 +86,116 @@ async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise
   return { nome, processos }
 }
 
+async function handleUnregisteredContact(ctx: RequestContext & { clienteId: string }): Promise<void> {
+  const { data: state } = await ctx.supabase
+    .from('whatsapp_contacts')
+    .select('conversation_state, metadata')
+    .eq('tenant_id', ctx.tenantId)
+    .eq('phone_number', ctx.phone)
+    .maybeSingle()
+
+  const conversationState = (state?.conversation_state as string) ?? 'IDLE'
+  const metadata = (state?.metadata as Record<string, any>) ?? {}
+
+  // State: waiting for CPF
+  if (conversationState === 'AWAITING_CPF') {
+    const cpf = ctx.message.replace(/\D/g, '')
+    if (cpf.length !== 11) {
+      await enqueueWhatsAppText(ctx, 'CPF inválido. Por favor, informe os 11 números do seu CPF.', 'orchestrator', `cpf_invalid:${ctx.phone}:${ctx.requestId}`)
+      return
+    }
+
+    const { data: cliente } = await ctx.supabase
+      .from('clientes')
+      .select('id, nome, numero_whatsapp')
+      .eq('user_id', ctx.tenantId)
+      .eq('documento', cpf)
+      .maybeSingle()
+
+    if (!cliente) {
+      await enqueueWhatsAppText(ctx, 'Não encontrei nenhum cadastro com esse CPF. Entre em contato com o escritório para mais informações.', 'orchestrator', `cpf_notfound:${ctx.phone}:${ctx.requestId}`)
+      await ctx.supabase.from('whatsapp_contacts').upsert({
+        tenant_id: ctx.tenantId,
+        phone_number: ctx.phone,
+        conversation_state: 'IDLE',
+        metadata: {},
+      }, { onConflict: 'tenant_id,phone_number' })
+      return
+    }
+
+    // Found — ask to link
+    await ctx.supabase.from('whatsapp_contacts').upsert({
+      tenant_id: ctx.tenantId,
+      phone_number: ctx.phone,
+      conversation_state: 'AWAITING_LINK_CONFIRM',
+      metadata: { pending_cliente_id: cliente.id, pending_cliente_nome: cliente.nome },
+    }, { onConflict: 'tenant_id,phone_number' })
+
+    await enqueueWhatsAppText(
+      ctx,
+      `Encontrei seu cadastro, *${cliente.nome}*! Deseja vincular este número WhatsApp ao seu cadastro para receber atualizações automáticas dos seus processos? Responda *SIM* para confirmar.`,
+      'orchestrator',
+      `cpf_found:${ctx.phone}:${ctx.requestId}`,
+    )
+    return
+  }
+
+  // State: waiting for link confirmation
+  if (conversationState === 'AWAITING_LINK_CONFIRM') {
+    const answer = ctx.message.trim().toLowerCase()
+    if (answer === 'sim' || answer === 'sim.' || answer === 's') {
+      const pendingClienteId = metadata?.pending_cliente_id
+      if (pendingClienteId) {
+        await ctx.supabase.from('clientes').update({ numero_whatsapp: ctx.phone, status_vinculo: 'ativo' }).eq('id', pendingClienteId)
+        await ctx.supabase.from('whatsapp_contacts').upsert({
+          tenant_id: ctx.tenantId,
+          phone_number: ctx.phone,
+          conversation_state: 'IDLE',
+          verified: true,
+          client_id: pendingClienteId,
+          metadata: {},
+        }, { onConflict: 'tenant_id,phone_number' })
+        await enqueueWhatsAppText(ctx, 'Número vinculado com sucesso! ✅ A partir de agora você receberá atualizações dos seus processos aqui. Em que posso ajudar?', 'orchestrator', `linked:${ctx.phone}:${ctx.requestId}`)
+      }
+    } else {
+      await ctx.supabase.from('whatsapp_contacts').upsert({
+        tenant_id: ctx.tenantId,
+        phone_number: ctx.phone,
+        conversation_state: 'IDLE',
+        metadata: {},
+      }, { onConflict: 'tenant_id,phone_number' })
+      await enqueueWhatsAppText(ctx, 'Tudo bem! Se precisar de ajuda, é só me chamar.', 'orchestrator', `link_declined:${ctx.phone}:${ctx.requestId}`)
+    }
+    return
+  }
+
+  // Default IDLE state for unregistered contact — ask CPF
+  await enqueueWhatsAppText(
+    ctx,
+    'Olá! Para consultar informações sobre seus processos, preciso identificar seu cadastro. Por favor, informe seu *CPF* (somente números).',
+    'orchestrator',
+    `ask_cpf:${ctx.phone}:${ctx.requestId}`,
+  )
+  await ctx.supabase.from('whatsapp_contacts').upsert({
+    tenant_id: ctx.tenantId,
+    phone_number: ctx.phone,
+    conversation_state: 'AWAITING_CPF',
+    metadata: {},
+  }, { onConflict: 'tenant_id,phone_number' })
+}
+
 export async function handleIncomingMessage(ctx: RequestContext & { clienteId: string }) {
   try {
     console.log(`[DEBUG-ORCH] handleIncomingMessage start clienteId=${ctx.clienteId} phone=${ctx.phone} msg="${ctx.message.slice(0, 30)}"`)
 
-    const { data: recentLogs, error: logsError } = await ctx.supabase
+    // Handle unregistered contacts with state machine
+    if (ctx.clienteId === 'sem_cadastro') {
+      await logConversation(ctx, 'inbound', ctx.message)
+      await handleUnregisteredContact(ctx)
+      return
+    }
+
+    const { data: recentLogs } = await ctx.supabase
       .from('conversation_logs')
       .select('direction, message')
       .eq('tenant_id', ctx.tenantId)
@@ -110,18 +203,13 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
       .order('created_at', { ascending: false })
       .limit(6)
 
-    console.log(`[DEBUG-ORCH] conversation_logs: count=${recentLogs?.length ?? 0} error=${logsError?.message ?? 'none'}`)
-
     await logConversation(ctx, 'inbound', ctx.message)
 
     const history = (recentLogs ?? []).reverse()
     const contextLines = history.map((l: any) => `${l.direction === 'inbound' ? 'Cliente' : 'Bot'}: ${l.message}`).join('\n')
     const intentInput = history.length > 0 ? `${contextLines}\nCliente: ${ctx.message}` : ctx.message
 
-    console.log(`[DEBUG-ORCH] calling classifyIntent...`)
-    const intentStart = Date.now()
     const intent = await classifyIntent(intentInput)
-    console.log(`[DEBUG-ORCH] classifyIntent result="${intent}" took=${Date.now() - intentStart}ms`)
 
     logInfo('orchestrator_decision', {
       request_id: ctx.requestId,
@@ -138,9 +226,7 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
         .eq('phone_number', ctx.phone)
 
       const text = 'Entendido. Você não receberá mais notificações automáticas sobre seus processos. Para reativar, entre em contato com o escritório.'
-      console.log(`[DEBUG-ORCH] enqueuing OPT_OUT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `opt_out:${ctx.clienteId}:${ctx.requestId}`)
-      console.log(`[DEBUG-ORCH] OPT_OUT enqueued OK`)
       return
     }
 
@@ -153,34 +239,21 @@ export async function handleIncomingMessage(ctx: RequestContext & { clienteId: s
 
       await registerEscalation(ctx, ctx.clienteId, 'HUMAN_SUPPORT', { intent })
       const text = 'Perfeito. Encaminhei sua conversa para o advogado responsável, que continuará o atendimento por aqui.'
-      console.log(`[DEBUG-ORCH] enqueuing HUMAN_SUPPORT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `human_support:${ctx.clienteId}:${ctx.requestId}`)
-      console.log(`[DEBUG-ORCH] HUMAN_SUPPORT enqueued OK`)
       return
     }
 
     if (intent === 'NEW_CLIENT') {
       const text = 'Obrigado pelo contato! Vou registrar seu interesse e nossa equipe entrará em contato para o atendimento inicial.'
       await registerEscalation(ctx, ctx.clienteId, 'NEW_CLIENT', { intent })
-      console.log(`[DEBUG-ORCH] enqueuing NEW_CLIENT response`)
       await enqueueWhatsAppText(ctx, text, 'orchestrator', `new_client:${ctx.requestId}`)
-      console.log(`[DEBUG-ORCH] NEW_CLIENT enqueued OK`)
       return
     }
 
-    console.log(`[DEBUG-ORCH] calling fetchClienteInfo for clienteId=${ctx.clienteId}`)
-    const fetchStart = Date.now()
+    // For registered contacts: fetch info and generate contextual response
     const clienteInfo = await fetchClienteInfo(ctx, ctx.clienteId)
-    console.log(`[DEBUG-ORCH] fetchClienteInfo done: nome="${clienteInfo.nome}" processos=${clienteInfo.processos.length} took=${Date.now() - fetchStart}ms`)
-
-    console.log(`[DEBUG-ORCH] calling generateContextualResponse...`)
-    const genStart = Date.now()
     const response = await generateContextualResponse(clienteInfo, ctx.message, contextLines, intent)
-    console.log(`[DEBUG-ORCH] generateContextualResponse done: responseLen=${response.length} took=${Date.now() - genStart}ms`)
-
-    console.log(`[DEBUG-ORCH] enqueuing contextual response`)
     await enqueueWhatsAppText(ctx, response, 'orchestrator', `contextual:${ctx.clienteId}:${ctx.requestId}`)
-    console.log(`[DEBUG-ORCH] contextual response enqueued OK`)
   } catch (error) {
     console.error(`[DEBUG-ORCH] EXCEPTION: ${String(error)}`)
     logError('orchestrator_failed', {

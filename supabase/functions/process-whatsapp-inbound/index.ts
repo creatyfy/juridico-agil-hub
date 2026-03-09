@@ -40,6 +40,19 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
 
   if (!inboundMessageId || !tenantId || !phone) throw new Error('invalid_whatsapp_event_payload')
 
+  // Debounce: wait 30s for message batching
+  const eventAge = Date.now() - new Date(event.created_at).getTime()
+  if (eventAge < 30000) throw new Error('debounce_wait')
+
+  const { count: pendingCount } = await svc
+    .from('domain_events')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('event_type', 'WHATSAPP_MESSAGE_RECEIVED')
+    .filter('payload->phone', 'eq', `"${phone}"`)
+    .eq('status', 'pending')
+  if ((pendingCount ?? 0) > 1) throw new Error('debounce_wait')
+
   const { data: inbound, error: inboundError } = await svc
     .from('inbound_messages')
     .select('id, instance_id, phone, payload_raw')

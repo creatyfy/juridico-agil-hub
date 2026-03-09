@@ -170,8 +170,9 @@ Deno.serve(async (req) => {
 
     for (const item of payloadMessages) {
       if (!item?.key) continue
+      if (item.key?.fromMe === true) continue
 
-      const isFromMe = item.key?.fromMe === true
+      const isFromMe = false
       const rawJid = item.key.remoteJid
       if (!rawJid || rawJid === 'status@broadcast' || rawJid.includes('@g.us')) continue
 
