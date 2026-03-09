@@ -83,6 +83,7 @@ export function useWhatsApp() {
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [instanciaId, setInstanciaId] = useState<string | null>(null);
   const [aiPausedChats, setAiPausedChats] = useState<Set<string>>(new Set());
   const selectedChatRef = useRef<string | null>(null);
   const syncedRef = useRef(
