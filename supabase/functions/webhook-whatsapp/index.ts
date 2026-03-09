@@ -243,12 +243,14 @@ Deno.serve(async (req) => {
 
       // If not from me, increment unread count
       if (!isFromMe) {
-        await supabase.rpc('increment_chat_unread', {
-          p_instancia_id: instance.id,
-          p_remote_jid: rawJid,
-        }).then(() => {}).catch(() => {
+        try {
+          await supabase.rpc('increment_chat_unread', {
+            p_instancia_id: instance.id,
+            p_remote_jid: rawJid,
+          })
+        } catch {
           // RPC may not exist, ignore
-        })
+        }
       }
 
       // Also persist to inbound_messages + domain_events for AI processing (only inbound)

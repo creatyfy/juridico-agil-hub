@@ -119,27 +119,7 @@ Deno.serve(async (req) => {
     }
 
     const nonce = crypto.randomUUID();
-
-    // Create new invite
-    const { data: invite, error: insertError } = await svc
-      .from("convites_vinculacao")
-      .insert({
-        cliente_id,
-        processo_id,
-        advogado_user_id: user.id,
-        invite_nonce: nonce,
-        token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-      })
-      .select("id, token")
-      .single();
-
-    if (insertError) {
-      console.error("Insert error:", insertError);
-      return new Response(JSON.stringify({ error: "Erro ao criar convite" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const inviteId = crypto.randomUUID();
 
     const jwtSecret = Deno.env.get("INVITE_JWT_SECRET") ?? serviceKey;
     const { data: clienteIdent } = await svc
@@ -153,11 +133,31 @@ Deno.serve(async (req) => {
       cliente_id,
       identity_hint: maskedIdentity(clienteIdent?.email ?? null, clienteIdent?.documento ?? null),
       nonce,
-      invite_id: invite.id,
+      invite_id: inviteId,
       ttlSeconds: 48 * 60 * 60,
     }, jwtSecret);
 
-    await svc.from("convites_vinculacao").update({ token: inviteToken }).eq("id", invite.id);
+    const { data: invite, error: insertError } = await svc
+      .from("convites_vinculacao")
+      .insert({
+        id: inviteId,
+        cliente_id,
+        processo_id,
+        advogado_user_id: user.id,
+        invite_nonce: nonce,
+        token: inviteToken,
+        token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      })
+      .select("id, token")
+      .single();
+
+    if (insertError) {
+      console.error("Insert error:", insertError);
+      return new Response(JSON.stringify({ error: "Erro ao criar convite" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     await logTenantAction(svc, {
       tenantId: user.id,
