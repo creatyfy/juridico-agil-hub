@@ -4,9 +4,6 @@ const features = [
   { emoji: '⚖️', title: 'Gestão de Processos', desc: 'Acompanhe todos os processos em tempo real com timeline de movimentações e alertas automáticos por tribunal.' },
   { emoji: '🤖', title: 'IA Jurídica', desc: 'Resumos automáticos de decisões, sugestões de peças e análise preditiva de resultados usando IA de ponta.' },
   { emoji: '💬', title: 'WhatsApp Integrado', desc: 'Atendimento automatizado via WhatsApp com respostas inteligentes e encaminhamento para o advogado responsável.' },
-  { emoji: '📊', title: 'Analytics Avançado', desc: 'Dashboards com métricas de desempenho, taxa de sucesso, prazos e produtividade do escritório.' },
-  { emoji: '🔔', title: 'Alertas Inteligentes', desc: 'Notificações proativas sobre prazos, audiências e movimentações com priorização automática.' },
-  { emoji: '🔒', title: 'Segurança Máxima', desc: 'Criptografia de ponta a ponta, conformidade com LGPD e OAB, autenticação multifator e audit logs.' },
 ];
 
 export default function FeaturesSection() {
