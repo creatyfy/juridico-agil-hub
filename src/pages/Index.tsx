@@ -103,7 +103,7 @@ export default function LandingPage() {
                   </Button>
                 </Link>
                 <Link to="/login">
-                  <Button size="lg" variant="outline" className="text-lg px-10 h-14 border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 backdrop-blur-sm">
+                  <Button size="lg" variant="outline" className="text-lg px-10 h-14 border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 backdrop-blur-sm bg-transparent">
                     Entrar na Plataforma
                     <ChevronRight className="ml-1 h-5 w-5" />
                   </Button>
