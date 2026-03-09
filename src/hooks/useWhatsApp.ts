@@ -457,7 +457,7 @@ export function useWhatsApp() {
 
 
   return {
-    status, qrCode, chats, messages, selectedChat, loading, syncing, aiPausedChats,
+    status, qrCode, chats, messages, selectedChat, loading, syncing, aiPausedChats, instanciaId,
     connect, disconnect, refreshQrCode, loadChats, loadMessages, sendMessage,
     checkStatus, setSelectedChat, toggleAiPause,
   };
