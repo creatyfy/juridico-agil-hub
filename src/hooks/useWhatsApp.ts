@@ -209,6 +209,16 @@ export function useWhatsApp() {
   }, []);
 
   const loadChats = useCallback(async () => {
+    // Buscar instância do usuário para filtrar Realtime
+    if (!instanciaId && user?.id) {
+      const { data: inst } = await supabase
+        .from('whatsapp_instancias')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (inst?.id) setInstanciaId(inst.id);
+    }
+
     const { data, error } = await supabase
       .from('whatsapp_chats_cache')
       .select('*')
@@ -230,7 +240,7 @@ export function useWhatsApp() {
       nao_lidas: c.nao_lidas || 0,
       is_group: c.is_group || false,
     })));
-  }, []);
+  }, [instanciaId, user]);
 
   const loadMessages = useCallback(async (remoteJid: string) => {
     setSelectedChat(remoteJid);
