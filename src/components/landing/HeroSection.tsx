@@ -133,7 +133,7 @@ export default function HeroSection() {
 
                 {/* Hearings table */}
                 <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
-                  <p className="text-xs font-semibold text-white/60 mb-3">Próximas Audiências</p>
+                  <p className="text-xs font-semibold text-white/60 mb-3">Processos</p>
                   <div className="space-y-2.5">
                     {[
                       { case: '0012345-67.2024', date: '15 Mar', status: 'Confirmada', color: 'text-emerald-400 bg-emerald-400/10' },
