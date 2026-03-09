@@ -115,8 +115,14 @@ export default function VincularWhatsApp() {
         body: buildBody('send-otp', { numero_whatsapp: cleanNumber }),
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('send-otp error:', error, result);
+        toast.error(result?.error || error.message || 'Erro ao enviar código');
+        setSendingOtp(false);
+        return;
+      }
       if (result?.error) {
+        console.error('send-otp result error:', result.error);
         toast.error(result.error);
         setSendingOtp(false);
         return;
