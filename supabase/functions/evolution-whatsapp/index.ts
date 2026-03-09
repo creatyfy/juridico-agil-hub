@@ -141,8 +141,8 @@ Deno.serve(async (req) => {
             foto: c.profilePicUrl || c.profilePictureUrl || null,
           })
         } else {
-          if (!existing.pushName && pushName) existing.pushName = pushName
-          if (!existing.name && (chatName || subject)) existing.name = chatName || subject || null
+          if (pushName) existing.pushName = pushName
+          if (chatName || subject) existing.name = existing.name || chatName || subject || null
           if (!existing.foto && (c.profilePicUrl || c.profilePictureUrl)) existing.foto = c.profilePicUrl || c.profilePictureUrl
         }
       }
@@ -173,12 +173,18 @@ Deno.serve(async (req) => {
       }
 
       // ── Step 5: Persist contacts to DB ──
+      // Name resolution: verifiedName > pushName > name > fallback
+      function resolveName(entry: { name: string | null; pushName: string | null; verifiedName: string | null } | undefined, fallback: string): string {
+        if (!entry) return fallback
+        return entry.verifiedName || entry.pushName || entry.name || fallback
+      }
+
       const contactsToSave = Array.from(contactsMap.entries())
         .filter(([jid]) => !jid.includes('@g.us') && jid !== 'status@broadcast')
         .map(([jid, c]) => ({
           instancia_id: instanceId,
           remote_jid: jid,
-          nome: c.name || c.verifiedName || c.pushName || null,
+          nome: resolveName(c, formatPhone(jid.replace('@s.whatsapp.net', '').replace('@lid', ''))),
           push_name: c.pushName || null,
           verified_name: c.verifiedName || null,
           numero: jid.replace('@s.whatsapp.net', '').replace('@lid', ''),
@@ -217,14 +223,10 @@ Deno.serve(async (req) => {
           const contact = contactsMap.get(jid)
           const rawNumber = jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace('@g.us', '')
 
-          // Name resolution priority
+          // Name resolution priority: DB client > resolveName > group subject > formatted number
           const clienteName = clienteMap.get(rawNumber) || null
-          const resolvedName = clienteName
-            || contact?.verifiedName
-            || contact?.name
-            || contact?.pushName
-            || (isGroup ? (c.subject || c.groupMetadata?.subject || c.name) : null)
-            || (isGroup ? jid : formatPhone(rawNumber))
+          const fallback = isGroup ? (c.subject || c.groupMetadata?.subject || c.name || jid) : formatPhone(rawNumber)
+          const resolvedName = clienteName || resolveName(contact, fallback)
 
           // Last message
           const lastMsgObj = c.lastMessage?.message || {}

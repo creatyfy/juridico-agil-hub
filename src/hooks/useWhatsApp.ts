@@ -246,14 +246,15 @@ export function useWhatsApp() {
   }, []);
 
   const sendMessage = useCallback(async (number: string, text: string) => {
+    const tempId = `temp_${crypto.randomUUID()}`;
     const optimisticMsg: Message = {
-      id: crypto.randomUUID(),
+      id: tempId,
       remote_jid: number,
       direcao: 'out',
       conteudo: text,
       tipo: 'text',
       timestamp: new Date().toISOString(),
-      message_id: null,
+      message_id: tempId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -395,15 +396,7 @@ export function useWhatsApp() {
         if (currentChat && newMsg.remote_jid === currentChat) {
           setMessages(prev => {
             if (newMsg.message_id && prev.some(m => m.message_id === newMsg.message_id)) return prev;
-            if (newMsg.direcao === 'out') {
-              const recent = prev.filter(m =>
-                m.direcao === 'out' &&
-                m.conteudo === newMsg.conteudo &&
-                Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 10000
-              );
-              if (recent.length > 0) return prev;
-            }
-            return [...prev, {
+            const realMsg = {
               id: newMsg.id,
               remote_jid: newMsg.remote_jid,
               direcao: newMsg.direcao,
@@ -412,7 +405,21 @@ export function useWhatsApp() {
               timestamp: newMsg.timestamp,
               message_id: newMsg.message_id,
               status_entrega: newMsg.status_entrega ?? null,
-            }];
+            };
+            if (newMsg.direcao === 'out') {
+              const tempIndex = prev.findIndex(m =>
+                m.id.startsWith('temp_') &&
+                m.conteudo === newMsg.conteudo &&
+                m.remote_jid === newMsg.remote_jid &&
+                Math.abs(new Date(m.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 15000
+              );
+              if (tempIndex !== -1) {
+                const updated = [...prev];
+                updated[tempIndex] = realMsg;
+                return updated;
+              }
+            }
+            return [...prev, realMsg];
           });
         }
       })
@@ -434,32 +441,6 @@ export function useWhatsApp() {
     return () => { supabase.removeChannel(channel); };
   }, [status, loadChats, chats, playNotificationSound]);
 
-  // Polling fallback every 10s for active conversation
-  useEffect(() => {
-    if (status !== 'connected') return;
-
-    const interval = setInterval(async () => {
-      const currentChat = selectedChatRef.current;
-      if (!currentChat) return;
-
-      try {
-        const res = await callEvolution('fetch-messages', { remoteJid: currentChat });
-        const fetched: Message[] = res.messages || [];
-        if (fetched.length === 0) return;
-
-        setMessages(prev => {
-          const existingIds = new Set(prev.map(m => m.message_id).filter(Boolean));
-          const newOnes = fetched.filter(m => m.message_id && !existingIds.has(m.message_id));
-          if (newOnes.length === 0) return prev;
-          return [...prev, ...newOnes];
-        });
-      } catch {
-        // Silent fallback
-      }
-    }, 10_000);
-
-    return () => clearInterval(interval);
-  }, [status]);
 
   return {
     status, qrCode, chats, messages, selectedChat, loading, syncing, aiPausedChats,
