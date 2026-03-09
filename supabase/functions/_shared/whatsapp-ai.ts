@@ -252,3 +252,17 @@ export async function generateContextualResponse(
   // Static fallback
   return buildStaticResponse(clienteInfo)
 }
+
+// --- Direct AI call with multi-provider fallback (for general conversation) ---
+export async function callAIWithFallback(systemPrompt: string, userMessage: string): Promise<string> {
+  const anthropicResult = await callAnthropic(systemPrompt, userMessage, 300)
+  if (anthropicResult && anthropicResult.length > 5) return anthropicResult
+
+  const openaiResult = await callOpenAI(systemPrompt, userMessage, 0.3)
+  if (openaiResult && openaiResult.length > 5) return openaiResult
+
+  const lovableResult = await callLovableAI(systemPrompt, userMessage, 0.3)
+  if (lovableResult && lovableResult.length > 5) return lovableResult
+
+  return 'Obrigado pelo contato! Como posso ajudar?'
+}
