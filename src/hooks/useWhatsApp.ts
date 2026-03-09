@@ -246,14 +246,15 @@ export function useWhatsApp() {
   }, []);
 
   const sendMessage = useCallback(async (number: string, text: string) => {
+    const tempId = `temp_${crypto.randomUUID()}`;
     const optimisticMsg: Message = {
-      id: crypto.randomUUID(),
+      id: tempId,
       remote_jid: number,
       direcao: 'out',
       conteudo: text,
       tipo: 'text',
       timestamp: new Date().toISOString(),
-      message_id: null,
+      message_id: tempId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
