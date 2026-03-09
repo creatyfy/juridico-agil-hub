@@ -68,7 +68,8 @@ export async function enqueueMessage(input: EnqueueMessageInput): Promise<Enqueu
     .eq('user_id', input.tenantId)
     .maybeSingle()
 
-  if (!connectedInstance || connectedInstance.status !== 'connected') {
+  const CONNECTED_STATUSES = ['connected', 'open', 'CONNECTED', 'OPEN']
+  if (!connectedInstance || !CONNECTED_STATUSES.includes(connectedInstance.status)) {
     console.warn(JSON.stringify({
       level: 'warn',
       event: 'enqueue_fail_fast_instance_unavailable',
