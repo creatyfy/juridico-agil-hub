@@ -240,10 +240,14 @@ export default function CadastroAdvogado() {
   return (
     <div className="min-h-screen flex">
       {/* Left panel */}
-      <div className="hidden lg:flex lg:w-[420px] xl:w-[480px] hero-section flex-col justify-between p-10">
+      <div className="hidden lg:flex lg:w-[420px] xl:w-[480px] hero-section flex-col justify-between p-10 relative">
+        <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors">
+          <ArrowLeft className="h-4 w-4" />
+          Voltar
+        </Link>
         <div>
           <Link to="/">
-            <img src={logo} alt="Jarvis Jud" className="h-14 brightness-0 invert mb-16" />
+            <img src={logo} alt="Jarvis Jud" className="h-14 brightness-0 invert mb-16 mt-6" />
           </Link>
 
           <h2 className="text-2xl font-bold text-primary-foreground mb-3">
