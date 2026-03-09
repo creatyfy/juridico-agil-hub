@@ -370,9 +370,9 @@ export function useWhatsApp() {
     }
   }, [status, runFullSync, loadChats]);
 
-  // Realtime: listen to chats cache changes + new messages
+  // Realtime: listen to chats cache changes + new messages (filtrado por instanciaId)
   useEffect(() => {
-    if (status !== 'connected') return;
+    if (status !== 'connected' || !instanciaId) return;
 
     const channel = supabase
       .channel('whatsapp-realtime-v2')
@@ -380,6 +380,7 @@ export function useWhatsApp() {
         event: '*',
         schema: 'public',
         table: 'whatsapp_chats_cache',
+        filter: `instancia_id=eq.${instanciaId}`,
       }, () => {
         loadChats();
       })
@@ -387,6 +388,7 @@ export function useWhatsApp() {
         event: 'INSERT',
         schema: 'public',
         table: 'whatsapp_mensagens',
+        filter: `instancia_id=eq.${instanciaId}`,
       }, (payload) => {
         const newMsg = payload.new as any;
         const currentChat = selectedChatRef.current;
@@ -438,6 +440,7 @@ export function useWhatsApp() {
         event: 'UPDATE',
         schema: 'public',
         table: 'whatsapp_mensagens',
+        filter: `instancia_id=eq.${instanciaId}`,
       }, (payload) => {
         const updated = payload.new as any;
         const currentChat = selectedChatRef.current;
@@ -450,7 +453,7 @@ export function useWhatsApp() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [status, loadChats, chats, playNotificationSound]);
+  }, [status, instanciaId, loadChats, chats, playNotificationSound]);
 
 
   return {
