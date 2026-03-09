@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     // Check for existing pending invite
     const { data: existing } = await svc
       .from("convites_vinculacao")
-      .select("id, token, status, invite_nonce")
+      .select("id, token, status, invite_nonce, token_expires_at")
       .eq("cliente_id", cliente_id)
       .eq("processo_id", processo_id)
       .eq("status", "pendente")
@@ -79,7 +79,40 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (existing) {
-      return new Response(JSON.stringify({ token: existing.token, id: existing.id, reused: true }), {
+      const expiresAt = existing.token_expires_at ? new Date(existing.token_expires_at).getTime() : 0;
+      const stillValid = expiresAt > Date.now() + 2 * 60 * 1000;
+
+      if (stillValid) {
+        return new Response(JSON.stringify({ token: existing.token, id: existing.id, reused: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const freshNonce = existing.invite_nonce ?? crypto.randomUUID();
+      const jwtSecret = Deno.env.get("INVITE_JWT_SECRET") ?? serviceKey;
+      const { data: clienteIdent } = await svc
+        .from("clientes")
+        .select("email, documento")
+        .eq("id", cliente_id)
+        .single();
+
+      const newToken = await signInviteJwt({
+        tenant_id: user.id,
+        cliente_id,
+        identity_hint: maskedIdentity(clienteIdent?.email ?? null, clienteIdent?.documento ?? null),
+        nonce: freshNonce,
+        invite_id: existing.id,
+        ttlSeconds: 48 * 60 * 60,
+      }, jwtSecret);
+
+      await svc.from("convites_vinculacao").update({
+        token: newToken,
+        invite_nonce: freshNonce,
+        token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      }).eq("id", existing.id);
+
+      return new Response(JSON.stringify({ token: newToken, id: existing.id, reused: true }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -95,7 +128,7 @@ Deno.serve(async (req) => {
         processo_id,
         advogado_user_id: user.id,
         invite_nonce: nonce,
-        token_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
       })
       .select("id, token")
       .single();
@@ -121,7 +154,7 @@ Deno.serve(async (req) => {
       identity_hint: maskedIdentity(clienteIdent?.email ?? null, clienteIdent?.documento ?? null),
       nonce,
       invite_id: invite.id,
-      ttlSeconds: 15 * 60,
+      ttlSeconds: 48 * 60 * 60,
     }, jwtSecret);
 
     await svc.from("convites_vinculacao").update({ token: inviteToken }).eq("id", invite.id);
