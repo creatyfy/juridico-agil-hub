@@ -92,16 +92,6 @@ export default function HeroSection() {
             {/* Browser mockup */}
             <div className="relative rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl overflow-hidden shadow-2xl shadow-black/40">
               {/* Browser bar */}
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-white/[0.02]">
-                <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-white/10" />
-                  <div className="w-3 h-3 rounded-full bg-white/10" />
-                  <div className="w-3 h-3 rounded-full bg-white/10" />
-                </div>
-                <div className="flex-1 mx-4 px-3 py-1 rounded-md bg-white/5 text-xs text-white/30">
-                  app.jud.com.br/dashboard
-                </div>
-              </div>
 
               <div className="p-5 space-y-4">
                 {/* Metric cards */}
