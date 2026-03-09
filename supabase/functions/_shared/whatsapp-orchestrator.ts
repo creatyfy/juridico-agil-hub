@@ -27,6 +27,11 @@ async function registerEscalation(ctx: RequestContext, clienteId: string | null,
 }
 
 async function fetchClienteInfo(ctx: RequestContext, clienteId: string): Promise<ClienteInfo> {
+  if (!clienteId || clienteId === 'sem_cadastro') {
+    console.log(`[DEBUG-ORCH] fetchClienteInfo skip — clienteId="${clienteId}", returning generic info`)
+    return { nome: 'Cliente', processos: [] }
+  }
+
   console.log(`[DEBUG-ORCH] fetchClienteInfo start clienteId=${clienteId} tenantId=${ctx.tenantId}`)
 
   const { data: cliente, error: clienteError } = await ctx.supabase
