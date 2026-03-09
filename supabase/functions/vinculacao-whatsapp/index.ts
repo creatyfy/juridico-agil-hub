@@ -112,14 +112,17 @@ Deno.serve(async (req) => {
         convite_id: convite.id,
         numero_informado: cleanNumber,
         codigo_otp_hash: otpHash,
-        codigo_otp: null,
+        codigo_otp: otp,
+        expiracao: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        validado: false,
+        tentativas: 0,
       });
 
       const { data: instance } = await svc
         .from("whatsapp_instancias")
         .select("id, instance_name, status")
         .eq("user_id", convite.advogado_user_id)
-        .eq("status", "connected")
+        .in("status", ["connected", "open", "CONNECTED", "OPEN"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
