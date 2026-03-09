@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Scale } from 'lucide-react';
+import logo from '@/assets/logo-jarvis-jud.png';
 import { Button } from '@/components/ui/button';
 
 export default function LandingNavbar() {
