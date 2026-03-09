@@ -441,32 +441,6 @@ export function useWhatsApp() {
     return () => { supabase.removeChannel(channel); };
   }, [status, loadChats, chats, playNotificationSound]);
 
-  // Polling fallback every 10s for active conversation
-  useEffect(() => {
-    if (status !== 'connected') return;
-
-    const interval = setInterval(async () => {
-      const currentChat = selectedChatRef.current;
-      if (!currentChat) return;
-
-      try {
-        const res = await callEvolution('fetch-messages', { remoteJid: currentChat });
-        const fetched: Message[] = res.messages || [];
-        if (fetched.length === 0) return;
-
-        setMessages(prev => {
-          const existingIds = new Set(prev.map(m => m.message_id).filter(Boolean));
-          const newOnes = fetched.filter(m => m.message_id && !existingIds.has(m.message_id));
-          if (newOnes.length === 0) return prev;
-          return [...prev, ...newOnes];
-        });
-      } catch {
-        // Silent fallback
-      }
-    }, 10_000);
-
-    return () => clearInterval(interval);
-  }, [status]);
 
   return {
     status, qrCode, chats, messages, selectedChat, loading, syncing, aiPausedChats,

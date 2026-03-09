@@ -223,14 +223,10 @@ Deno.serve(async (req) => {
           const contact = contactsMap.get(jid)
           const rawNumber = jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace('@g.us', '')
 
-          // Name resolution priority
+          // Name resolution priority: DB client > resolveName > group subject > formatted number
           const clienteName = clienteMap.get(rawNumber) || null
-          const resolvedName = clienteName
-            || contact?.verifiedName
-            || contact?.name
-            || contact?.pushName
-            || (isGroup ? (c.subject || c.groupMetadata?.subject || c.name) : null)
-            || (isGroup ? jid : formatPhone(rawNumber))
+          const fallback = isGroup ? (c.subject || c.groupMetadata?.subject || c.name || jid) : formatPhone(rawNumber)
+          const resolvedName = clienteName || resolveName(contact, fallback)
 
           // Last message
           const lastMsgObj = c.lastMessage?.message || {}
