@@ -108,9 +108,13 @@ export default function Login() {
   return (
     <div className="min-h-screen flex">
       {/* Left panel */}
-      <div className="hidden lg:flex lg:w-1/2 hero-section flex-col justify-center items-center p-12">
-        <div className="max-w-md text-center">
-          <img src={logo} alt="Jarvis Jud" className="h-16 mx-auto mb-6 brightness-0 invert" />
+        <div className="hidden lg:flex lg:w-1/2 hero-section flex-col justify-center items-center p-12 relative">
+          <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" />
+            Voltar
+          </Link>
+          <div className="max-w-md text-center">
+            <img src={logo} alt="Jarvis Jud" className="h-16 mx-auto mb-6 brightness-0 invert" />
           <p className="text-primary-foreground/80 text-lg leading-relaxed">
             Automação jurídica inteligente. Gerencie processos, atenda clientes e acompanhe movimentações em um só lugar.
           </p>
