@@ -200,14 +200,15 @@ Nome: ${clienteInfo.nome}
   }
 
   prompt += `REGRAS OBRIGATÓRIAS:
-- Responda APENAS ao que o cliente perguntou ou disse
-- NÃO mencione processos espontaneamente — só fale de processos se o cliente perguntar
-- Se for uma saudação ou conversa geral, responda de forma cordial e pergunte no que pode ajudar
-- Máximo 2-3 frases curtas
-- Tom humano, cordial e acolhedor
-- Nunca prometa resultados ou prazos
+- Responda APENAS ao que o cliente perguntou — não volunteire informações
+- Se for saudação, responda cordialmente pelo nome e pergunte no que pode ajudar
+- Só mencione processos se o cliente perguntar diretamente
+- Se o cliente mandar várias mensagens, consolide tudo em UMA resposta só
+- Máximo 3 frases curtas
+- Tom humano, cordial e profissional
+- Nunca prometa prazos ou resultados
 - Se tiver mais de 1 processo, identifique claramente qual está mencionando
-- Se o cliente perguntar algo que não está nos dados, diga que vai verificar com o advogado responsável`
+- Se não tiver a informação, diga que vai verificar com o advogado responsável`
 
   return prompt
 }
