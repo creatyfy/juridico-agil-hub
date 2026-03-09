@@ -308,11 +308,18 @@ export default function CadastroAdvogado() {
       {/* Right panel */}
       <div className="flex-1 flex items-center justify-center p-6 md:p-10 bg-background overflow-y-auto">
         <div className="w-full max-w-lg">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex justify-center mb-6">
-            <Link to="/">
-              <img src={logo} alt="Jarvis Jud" className="h-10" />
+          {/* Back button + Mobile logo */}
+          <div className="flex items-center justify-between mb-6">
+            <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <ArrowLeft className="h-4 w-4" />
+              Voltar
             </Link>
+            <div className="lg:hidden">
+              <Link to="/">
+                <img src={logo} alt="Jarvis Jud" className="h-10" />
+              </Link>
+            </div>
+            <div className="w-16 hidden lg:block" /> {/* spacer */}
           </div>
 
           {/* Mobile stepper */}
