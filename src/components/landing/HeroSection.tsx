@@ -136,9 +136,9 @@ export default function HeroSection() {
                   <p className="text-xs font-semibold text-white/60 mb-3">Processos</p>
                   <div className="space-y-2.5">
                     {[
-                      { case: '0012345-67.2024', date: '15 Mar', status: 'Confirmada', color: 'text-emerald-400 bg-emerald-400/10' },
-                      { case: '0098765-43.2024', date: '18 Mar', status: 'Pendente', color: 'text-amber-400 bg-amber-400/10' },
-                      { case: '0054321-89.2024', date: '22 Mar', status: 'Agendada', color: 'text-[#3a7dff] bg-[#3a7dff]/10' },
+                      { case: '0012345-67.2024', date: '15 Mar', status: 'Ativo', color: 'text-emerald-400 bg-emerald-400/10' },
+                      { case: '0098765-43.2024', date: '18 Mar', status: 'Ativo', color: 'text-emerald-400 bg-emerald-400/10' },
+                      { case: '0054321-89.2024', date: '22 Mar', status: 'Arquivado', color: 'text-white/50 bg-white/5' },
                     ].map((h, i) => (
                       <div key={i} className="flex items-center justify-between py-1.5">
                         <div className="flex items-center gap-3">
