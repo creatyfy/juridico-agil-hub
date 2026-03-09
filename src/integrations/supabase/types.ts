@@ -387,10 +387,12 @@ export type Database = {
           data_aceite: string | null
           expiracao: string
           id: string
+          invite_nonce: string | null
           ip_aceite: string | null
           processo_id: string
           status: string
           token: string
+          token_expires_at: string | null
         }
         Insert: {
           advogado_user_id: string
@@ -399,10 +401,12 @@ export type Database = {
           data_aceite?: string | null
           expiracao?: string
           id?: string
+          invite_nonce?: string | null
           ip_aceite?: string | null
           processo_id: string
           status?: string
           token?: string
+          token_expires_at?: string | null
         }
         Update: {
           advogado_user_id?: string
@@ -411,10 +415,12 @@ export type Database = {
           data_aceite?: string | null
           expiracao?: string
           id?: string
+          invite_nonce?: string | null
           ip_aceite?: string | null
           processo_id?: string
           status?: string
           token?: string
+          token_expires_at?: string | null
         }
         Relationships: [
           {
