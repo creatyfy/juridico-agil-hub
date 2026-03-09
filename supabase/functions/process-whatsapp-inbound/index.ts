@@ -87,27 +87,45 @@ async function processInboundEvent(svc: AnySupabase, workerId: string, event: an
       message: message.trim(),
     }
 
-    const verified = await isPhoneVerified(ctx)
-    console.log(`[DEBUG-INBOUND] isPhoneVerified: verified=${verified.verified} clienteId=${verified.clienteId}`)
+    const requireAuth = Deno.env.get('WHATSAPP_REQUIRE_AUTH') === 'true'
+    console.log(`[DEBUG-INBOUND] requireAuth=${requireAuth}`)
 
-    if (!verified.verified) {
-      console.log(`[DEBUG-INBOUND] entering auth flow`)
-      const authResult = await handleAuthenticationFlow(ctx)
-      console.log(`[DEBUG-INBOUND] authResult: authenticated=${authResult.authenticated} clienteId=${authResult.clienteId}`)
-      if (!authResult.authenticated || !authResult.clienteId) return
-      console.log(`[DEBUG-INBOUND] calling orchestrator after auth`)
-      await handleIncomingMessage({ ...ctx, clienteId: authResult.clienteId })
-      console.log(`[DEBUG-INBOUND] orchestrator completed after auth`)
-      return
+    if (requireAuth) {
+      const verified = await isPhoneVerified(ctx)
+      console.log(`[DEBUG-INBOUND] isPhoneVerified: verified=${verified.verified} clienteId=${verified.clienteId}`)
+
+      if (!verified.verified) {
+        console.log(`[DEBUG-INBOUND] entering auth flow`)
+        const authResult = await handleAuthenticationFlow(ctx)
+        console.log(`[DEBUG-INBOUND] authResult: authenticated=${authResult.authenticated} clienteId=${authResult.clienteId}`)
+        if (!authResult.authenticated || !authResult.clienteId) return
+        console.log(`[DEBUG-INBOUND] calling orchestrator after auth`)
+        await handleIncomingMessage({ ...ctx, clienteId: authResult.clienteId })
+        console.log(`[DEBUG-INBOUND] orchestrator completed after auth`)
+        return
+      }
+
+      const optInEnabled = await tryActivateNotificationsOptIn(ctx)
+      if (optInEnabled) return
+
+      if (!verified.clienteId) throw new Error('verified_without_cliente')
+      console.log(`[DEBUG-INBOUND] calling orchestrator for verified contact clienteId=${verified.clienteId}`)
+      await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
+      console.log(`[DEBUG-INBOUND] orchestrator completed for verified contact`)
+    } else {
+      // Sem autenticação obrigatória: busca cliente pelo telefone ou segue sem cadastro
+      const { data: cliente } = await svc
+        .from('clientes')
+        .select('id')
+        .eq('user_id', tenantId)
+        .or(`telefone.eq.${inbound.phone},numero_whatsapp.eq.${inbound.phone}`)
+        .maybeSingle()
+
+      const clienteId = cliente?.id ?? 'sem_cadastro'
+      console.log(`[DEBUG-INBOUND] no-auth mode: clienteId=${clienteId} phone=${inbound.phone}`)
+      await handleIncomingMessage({ ...ctx, clienteId })
+      console.log(`[DEBUG-INBOUND] orchestrator completed (no-auth)`)
     }
-
-    const optInEnabled = await tryActivateNotificationsOptIn(ctx)
-    if (optInEnabled) return
-
-    if (!verified.clienteId) throw new Error('verified_without_cliente')
-    console.log(`[DEBUG-INBOUND] calling orchestrator for verified contact clienteId=${verified.clienteId}`)
-    await handleIncomingMessage({ ...ctx, clienteId: verified.clienteId })
-    console.log(`[DEBUG-INBOUND] orchestrator completed for verified contact`)
   } finally {
     await svc.rpc('release_conversation_lock', {
       p_tenant_id: tenantId,
