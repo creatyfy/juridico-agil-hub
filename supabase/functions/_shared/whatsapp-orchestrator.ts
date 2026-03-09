@@ -120,12 +120,28 @@ async function handleUnregisteredContact(ctx: RequestContext & { clienteId: stri
       return
     }
 
+    // Check if client has any active processes before offering to link
+    const { data: bindings, count: processCount } = await ctx.supabase
+      .from('cliente_processos')
+      .select('id', { count: 'exact', head: true })
+      .eq('cliente_id', cliente.id)
+      .eq('status', 'ativo')
+
+    if ((processCount ?? 0) === 0) {
+      await ctx.supabase.from('whatsapp_contacts').upsert({
+        tenant_id: ctx.tenantId, phone_number: ctx.phone,
+        conversation_state: 'IDLE', metadata: {}
+      }, { onConflict: 'tenant_id,phone_number' })
+      await enqueueWhatsAppText(ctx, `Encontrei seu cadastro, *${cliente.nome}*, mas no momento não há processos ativos vinculados. Quando houver novidades, o escritório entrará em contato!`, 'orchestrator', `cpf_no_processes:${ctx.phone}:${ctx.requestId}`)
+      return
+    }
+
     await ctx.supabase.from('whatsapp_contacts').upsert({
       tenant_id: ctx.tenantId, phone_number: ctx.phone,
       conversation_state: 'AWAITING_LINK_CONFIRM',
       metadata: { pending_cliente_id: cliente.id, pending_cliente_nome: cliente.nome }
     }, { onConflict: 'tenant_id,phone_number' })
-    await enqueueWhatsAppText(ctx, `Encontrei seu cadastro, *${cliente.nome}*! Deseja vincular este número ao seu cadastro para receber atualizações dos seus processos? Responda *SIM* para confirmar.`, 'orchestrator', `cpf_found:${ctx.phone}:${ctx.requestId}`)
+    await enqueueWhatsAppText(ctx, `Encontrei seu cadastro, *${cliente.nome}*! Você tem ${processCount} processo(s) ativo(s). Deseja vincular este número ao seu cadastro para receber atualizações? Responda *SIM* para confirmar.`, 'orchestrator', `cpf_found:${ctx.phone}:${ctx.requestId}`)
     return
   }
 
