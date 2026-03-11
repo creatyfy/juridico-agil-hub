@@ -64,25 +64,28 @@ serve(async (req) => {
       return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // action === 'results' — fetch ALL pages
+    // action === 'results' — fetch ALL pages with max page_size
     const allPageData: unknown[] = [];
     let page = 1;
-    const maxPages = 50; // safety limit
+    const pageSize = 100; // max recommended by Judit docs
+    const maxPages = 100; // safety limit
 
     while (page <= maxPages) {
       const data = await juditRequest({
         tenantKey: user.id,
         apiKey: tenantApiKey,
-        path: `/responses?request_id=${request_id}&page=${page}`,
+        path: `/responses?request_id=${request_id}&page=${page}&page_size=${pageSize}`,
       });
+
+      console.log(`[search-processes] Page ${page} response: page_count=${data?.page_count}, all_pages_count=${data?.all_pages_count}, all_count=${data?.all_count}, page_data_length=${data?.page_data?.length}`);
 
       const pageData = data?.page_data || data?.data || [];
       if (pageData.length === 0) break;
 
       allPageData.push(...pageData);
 
-      // Check if there are more pages
-      const totalPages = data?.total_pages || data?.last_page || 1;
+      // Judit API uses page_count or all_pages_count for total pages
+      const totalPages = data?.page_count || data?.all_pages_count || 1;
       if (page >= totalPages) break;
       page++;
     }
