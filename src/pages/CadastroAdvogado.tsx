@@ -161,6 +161,7 @@ export default function CadastroAdvogado() {
 
   const [submitError, setSubmitError] = useState('');
   const [resending, setResending] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'' | 'success' | 'error'>('');
 
   const handleSubmit = async () => {
     if (!validateStep2()) {
@@ -217,6 +218,7 @@ export default function CadastroAdvogado() {
 
   const handleResendEmail = async () => {
     setResending(true);
+    setResendStatus('');
     try {
       const { error } = await supabase.auth.resend({
         type: 'signup',
@@ -226,12 +228,12 @@ export default function CadastroAdvogado() {
         },
       });
       if (error) {
-        alert('Erro ao reenviar e-mail: ' + error.message);
+        setResendStatus('error');
       } else {
-        alert('E-mail reenviado! Verifique sua caixa de entrada e spam.');
+        setResendStatus('success');
       }
     } catch {
-      alert('Erro ao reenviar e-mail. Tente novamente.');
+      setResendStatus('error');
     } finally {
       setResending(false);
     }
@@ -661,7 +663,17 @@ export default function CadastroAdvogado() {
                     Ir para o Login
                   </Button>
                 </Link>
-                <p className="text-xs text-muted-foreground">
+                {resendStatus === 'success' && (
+                  <div className="mt-4 p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700 max-w-sm mx-auto">
+                    ✓ E-mail reenviado! Verifique sua caixa de entrada e spam.
+                  </div>
+                )}
+                {resendStatus === 'error' && (
+                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive max-w-sm mx-auto">
+                    Erro ao reenviar e-mail. Tente novamente em alguns minutos.
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-4">
                   Não recebeu?{' '}
                   <button
                     onClick={handleResendEmail}
