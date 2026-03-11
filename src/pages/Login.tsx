@@ -39,7 +39,7 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const PROD_URL = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
+  const PROD_URL = 'https://jarvisjud.online';
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();

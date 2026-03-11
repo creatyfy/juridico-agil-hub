@@ -176,7 +176,7 @@ Deno.serve(async (req) => {
       try {
         const resendKey = Deno.env.get("RESEND_API_KEY");
         if (resendKey) {
-          const baseUrl = req.headers.get("origin") || "https://juridico-agil-hub.lovable.app";
+          const baseUrl = "https://jarvisjud.online";
           const inviteUrl = `${baseUrl}/convite/${inviteToken}`;
 
           await fetch("https://api.resend.com/emails", {
