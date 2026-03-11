@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { Eye, EyeOff, Loader2, AlertCircle, Scale, Mail, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, Scale, Mail, ArrowLeft, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -32,8 +32,61 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  const PROD_URL = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    let targetEmail = forgotEmail;
+
+    // If in OAB mode and no email provided, look up via OAB
+    if (mode === 'oab' && oab && uf && !forgotEmail) {
+      setForgotLoading(true);
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke('login-oab', {
+          body: { action: 'lookup', oab, uf },
+        });
+        if (fnError || data?.error) {
+          setError('OAB não encontrada. Verifique os dados.');
+          setForgotLoading(false);
+          return;
+        }
+        targetEmail = data.email;
+      } catch {
+        setError('Erro ao buscar e-mail da OAB.');
+        setForgotLoading(false);
+        return;
+      }
+    }
+
+    if (!targetEmail) {
+      setError('Informe seu e-mail para recuperar a senha.');
+      return;
+    }
+
+    setForgotLoading(true);
+    setError('');
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+        redirectTo: `${PROD_URL}/reset-password`,
+      });
+      if (resetError) {
+        setError(resetError.message);
+      } else {
+        setForgotSent(true);
+      }
+    } catch {
+      setError('Erro ao enviar e-mail de recuperação.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,112 +223,216 @@ export default function Login() {
             </Alert>
           )}
 
-          {/* OAB + Senha Login */}
-          {mode === 'oab' && (
-            <form onSubmit={handleOabLogin} className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
-                  <label className="text-sm font-medium mb-1.5 block">UF</label>
-                  <Select value={uf} onValueChange={setUf}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="UF" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {UF_OPTIONS.map(u => (
-                        <SelectItem key={u} value={u}>{u}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+          {/* Forgot password mode */}
+          {forgotMode ? (
+            forgotSent ? (
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center mx-auto">
+                  <Mail className="h-8 w-8 text-accent" />
                 </div>
-                <div className="col-span-2">
-                  <label className="text-sm font-medium mb-1.5 block">Número OAB</label>
-                  <Input
-                    placeholder="123456"
-                    value={oab}
-                    onChange={(e) => setOab(e.target.value.replace(/\D/g, '').slice(0, 7))}
-                  />
-                </div>
+                <h3 className="text-lg font-semibold">E-mail enviado!</h3>
+                <p className="text-sm text-muted-foreground">
+                  Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha. Verifique também a pasta de spam.
+                </p>
+                <Button variant="outline" onClick={() => { setForgotMode(false); setForgotSent(false); setError(''); }}>
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Voltar ao Login
+                </Button>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1.5 block">Senha</label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Sua senha"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-              <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Entrando...
-                  </span>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                {mode === 'oab' ? (
+                  <>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Informe sua OAB e UF. Enviaremos o link de redefinição para o e-mail cadastrado.
+                    </p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-1">
+                        <label className="text-sm font-medium mb-1.5 block">UF</label>
+                        <Select value={uf} onValueChange={setUf}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="UF" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {UF_OPTIONS.map(u => (
+                              <SelectItem key={u} value={u}>{u}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-sm font-medium mb-1.5 block">Número OAB</label>
+                        <Input
+                          placeholder="123456"
+                          value={oab}
+                          onChange={(e) => setOab(e.target.value.replace(/\D/g, '').slice(0, 7))}
+                        />
+                      </div>
+                    </div>
+                  </>
                 ) : (
-                  'Entrar com OAB'
+                  <>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Informe seu e-mail cadastrado para receber o link de redefinição.
+                    </p>
+                    <div>
+                      <label className="text-sm font-medium mb-1.5 block">E-mail</label>
+                      <Input
+                        type="email"
+                        placeholder="seu@email.com"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                      />
+                    </div>
+                  </>
                 )}
-              </Button>
-            </form>
-          )}
+                <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={forgotLoading}>
+                  {forgotLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Enviando...
+                    </span>
+                  ) : (
+                    'Enviar link de redefinição'
+                  )}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => { setForgotMode(false); setError(''); }}
+                  className="w-full text-sm text-muted-foreground hover:text-foreground text-center"
+                >
+                  ← Voltar ao login
+                </button>
+              </form>
+            )
+          ) : (
+            <>
+              {/* OAB + Senha Login */}
+              {mode === 'oab' && (
+                <form onSubmit={handleOabLogin} className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-1">
+                      <label className="text-sm font-medium mb-1.5 block">UF</label>
+                      <Select value={uf} onValueChange={setUf}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="UF" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {UF_OPTIONS.map(u => (
+                            <SelectItem key={u} value={u}>{u}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium mb-1.5 block">Número OAB</label>
+                      <Input
+                        placeholder="123456"
+                        value={oab}
+                        onChange={(e) => setOab(e.target.value.replace(/\D/g, '').slice(0, 7))}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-sm font-medium">Senha</label>
+                      <button
+                        type="button"
+                        onClick={() => { setForgotMode(true); setError(''); }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Esqueci minha senha
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Sua senha"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Entrando...
+                      </span>
+                    ) : (
+                      'Entrar com OAB'
+                    )}
+                  </Button>
+                </form>
+              )}
 
-          {/* Email + Senha Login */}
-          {mode === 'email' && (
-            <form onSubmit={handleEmailLogin} className="space-y-4">
-              <div>
-                <label className="text-sm font-medium mb-1.5 block">E-mail</label>
-                <Input
-                  type="email"
-                  placeholder="seu@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1.5 block">Senha</label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Sua senha"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-              <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Entrando...
-                  </span>
-                ) : (
-                  'Entrar'
-                )}
-              </Button>
-            </form>
-          )}
+              {/* Email + Senha Login */}
+              {mode === 'email' && (
+                <form onSubmit={handleEmailLogin} className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium mb-1.5 block">E-mail</label>
+                    <Input
+                      type="email"
+                      placeholder="seu@email.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-sm font-medium">Senha</label>
+                      <button
+                        type="button"
+                        onClick={() => { setForgotMode(true); setForgotEmail(email); setError(''); }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Esqueci minha senha
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Sua senha"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <Button type="submit" className="btn-accent w-full h-11 text-sm font-semibold" disabled={loading}>
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Entrando...
+                      </span>
+                    ) : (
+                      'Entrar'
+                    )}
+                  </Button>
+                </form>
+              )}
 
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Não tem conta?{' '}
-            <a href="/cadastro/advogado" className="text-accent hover:underline font-medium">Criar conta</a>
-          </p>
+              <p className="text-center text-sm text-muted-foreground mt-6">
+                Não tem conta?{' '}
+                <a href="/cadastro/advogado" className="text-accent hover:underline font-medium">Criar conta</a>
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>
