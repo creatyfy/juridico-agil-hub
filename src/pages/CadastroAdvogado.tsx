@@ -175,7 +175,7 @@ export default function CadastroAdvogado() {
         email: form.email,
         password: form.senha,
         options: {
-          emailRedirectTo: window.location.origin + '/login',
+          emailRedirectTo: (import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online') + '/login',
           data: {
             full_name: form.nomeCompleto,
             oab: form.oab,
