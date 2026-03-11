@@ -339,7 +339,17 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           data_distribuicao: p.distribution_date || p.data_distribuicao || null,
           judit_process_id: p.response_id?.toString() || p.id?.toString() || null,
           fonte: importMode === 'manual' ? 'manual' : 'judit',
-          movimentacoes: p.last_step ? [p.last_step] : (p.steps || p.movimentacoes || []),
+          movimentacoes: (() => {
+            // Gather all available movements, preferring full steps array
+            const allSteps = p.steps || p.movimentacoes || [];
+            if (allSteps.length > 0) return allSteps;
+            if (p.last_step) {
+              console.log('[ImportarProcessos] last_step keys:', Object.keys(p.last_step));
+              console.log('[ImportarProcessos] last_step:', JSON.stringify(p.last_step).slice(0, 300));
+              return [p.last_step];
+            }
+            return [];
+          })(),
         };
       });
 

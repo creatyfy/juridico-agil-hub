@@ -90,14 +90,26 @@ serve(async (req) => {
 
       // Insert movimentacoes if provided
       if (proc.movimentacoes && Array.isArray(proc.movimentacoes)) {
-        const movs = proc.movimentacoes.map((m: any) => ({
-          processo_id: processo.id,
-          data_movimentacao: m.data_movimentacao || m.date || m.datetime || m.created_at || null,
-          tipo: m.tipo || m.type || m.name || null,
-          descricao: m.descricao || m.description || m.content || m.complement || 'Movimentação',
-          conteudo: m.conteudo || m.content || m.complement || m.description || null,
-          judit_movement_id: m.id ? String(m.id) : (m.judit_movement_id || null),
-        }));
+        // Log raw movement data for debugging field names
+        if (proc.movimentacoes.length > 0) {
+          console.log('[import-processes] Raw movement sample keys:', JSON.stringify(Object.keys(proc.movimentacoes[0])));
+          console.log('[import-processes] Raw movement sample:', JSON.stringify(proc.movimentacoes[0]).slice(0, 500));
+        }
+
+        const movs = proc.movimentacoes.map((m: any) => {
+          // Try all known date field variations from Judit API
+          const rawDate = m.data_movimentacao || m.date || m.step_date || m.datetime
+            || m.data || m.movement_date || m.updated_at || m.created_at || null;
+          
+          return {
+            processo_id: processo.id,
+            data_movimentacao: rawDate,
+            tipo: m.tipo || m.type || m.name || m.step_type || null,
+            descricao: m.descricao || m.description || m.content || m.complement || m.name || 'Movimentação',
+            conteudo: m.conteudo || m.content || m.complement || m.description || m.text || null,
+            judit_movement_id: m.id ? String(m.id) : (m.judit_movement_id || m.step_id ? String(m.step_id) : null),
+          };
+        });
 
         if (movs.length > 0) {
           const { error: movError } = await supabase
