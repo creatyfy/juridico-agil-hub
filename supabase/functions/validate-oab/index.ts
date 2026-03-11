@@ -97,50 +97,61 @@ serve(async (req: Request) => {
  */
 async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
   try {
-    const ufName = UF_NAMES[uf] || uf;
-    const query = `advogado OAB ${oab} ${uf} "${ufName}" nome cadastro`;
-    console.log(`Firecrawl search: "${query}"`);
+    // Try multiple search queries
+    const queries = [
+      `"OAB" "${oab}" "${uf}" advogado nome`,
+      `OAB ${uf} ${oab} advogado`,
+    ];
 
-    const response = await fetch('https://api.firecrawl.dev/v1/search', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query,
-        limit: 5,
-        lang: 'pt-br',
-        country: 'br',
-      }),
-    });
+    for (const query of queries) {
+      console.log(`Firecrawl search: "${query}"`);
 
-    if (!response.ok) {
-      console.error(`Firecrawl search failed: ${response.status}`);
-      return null;
-    }
+      const response = await fetch('https://api.firecrawl.dev/v1/search', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          limit: 5,
+          lang: 'pt-br',
+          country: 'br',
+          scrapeOptions: {
+            formats: ['markdown'],
+          },
+        }),
+      });
 
-    const data = await response.json();
-    const results = data?.data || data?.results || [];
-    console.log(`Firecrawl search returned ${results.length} results`);
+      if (!response.ok) {
+        console.error(`Firecrawl search failed: ${response.status}`);
+        continue;
+      }
 
-    // Look through search results for lawyer name
-    for (const result of results) {
-      const text = [
-        result.title || '',
-        result.description || '',
-        result.markdown || '',
-        result.content || '',
-      ].join(' ');
+      const data = await response.json();
+      const results = data?.data || data?.results || [];
+      console.log(`Firecrawl search returned ${results.length} results`);
 
-      const name = extractLawyerName(text, oab, uf);
-      if (name) {
-        return {
-          nome: name.toUpperCase(),
-          status: 'ativo' as const,
-          inscricao: oab,
-          uf,
-        };
+      for (const result of results) {
+        const text = [
+          result.title || '',
+          result.description || '',
+          result.markdown || '',
+          result.content || '',
+        ].join('\n');
+
+        // Log first 300 chars of each result for debugging
+        console.log(`Result [${result.url || 'no-url'}]: ${text.substring(0, 300).replace(/\n/g, ' ')}`);
+
+        const name = extractLawyerName(text, oab, uf);
+        if (name) {
+          return {
+            nome: name.toUpperCase(),
+            status: 'ativo' as const,
+            inscricao: oab,
+            uf,
+          };
+        }
       }
     }
 
