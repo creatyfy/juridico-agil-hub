@@ -15,7 +15,7 @@ interface TimelineEventProps {
 
 export default function TimelineEvent({ date, title, description, content, type = 'default', isLast }: TimelineEventProps) {
   const [expanded, setExpanded] = useState(false);
-  const showContent = content && content !== description;
+  const showContent = !!content;
   const hasLongContent = showContent && content.length > 120;
   const displayContent = hasLongContent && !expanded ? content.slice(0, 120) + '…' : content;
 
