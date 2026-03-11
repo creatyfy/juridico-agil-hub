@@ -1,4 +1,4 @@
-import { Search, Users, User, FileText } from 'lucide-react';
+import { Search, Users, User, FileText, AlertTriangle, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useClientes } from '@/hooks/useClientes';
@@ -51,12 +51,13 @@ export default function ClientesList() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map(cliente => {
             const numProc = countProcessos(cliente.documento);
+            const isIncomplete = !cliente.numero_whatsapp && !cliente.telefone;
             return (
               <Link key={cliente.id} to={`/clientes/${cliente.id}`} className="block group">
-                <div className="bg-card rounded-xl border p-5 h-full transition-all duration-200 hover:shadow-[0_8px_30px_-4px_hsl(212_88%_50%/0.18)] hover:border-accent/40">
+                <div className={`bg-card rounded-xl border p-5 h-full transition-all duration-200 hover:shadow-[0_8px_30px_-4px_hsl(212_88%_50%/0.18)] hover:border-accent/40 ${isIncomplete ? 'border-yellow-400/50' : ''}`}>
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
-                      <User className="h-5 w-5 text-accent" />
+                    <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${isIncomplete ? 'bg-yellow-500/10' : 'bg-accent/10'}`}>
+                      <User className={`h-5 w-5 ${isIncomplete ? 'text-yellow-600' : 'text-accent'}`} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-foreground truncate">{cliente.nome}</p>
@@ -65,9 +66,24 @@ export default function ClientesList() {
                           {cliente.tipo_documento}: {cliente.documento}
                         </p>
                       )}
-                      <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground/70">
-                        <FileText className="h-3 w-3" />
-                        <span>{numProc} processo(s)</span>
+                      <div className="flex items-center gap-3 mt-2">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground/70">
+                          <FileText className="h-3 w-3" />
+                          <span>{numProc} processo(s)</span>
+                        </div>
+                        {isIncomplete ? (
+                          <div className="flex items-center gap-1 text-xs text-yellow-600 font-medium">
+                            <AlertTriangle className="h-3 w-3" />
+                            <span>Cadastro incompleto</span>
+                          </div>
+                        ) : (
+                          cliente.numero_whatsapp && (
+                            <div className="flex items-center gap-1 text-xs text-green-600">
+                              <MessageCircle className="h-3 w-3" />
+                              <span>WhatsApp</span>
+                            </div>
+                          )
+                        )}
                       </div>
                     </div>
                   </div>

@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle, MessageSquare } from 'lucide-react';
+import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle, MessageSquare, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ export default function ClienteDetail() {
   const { vinculos, refetch: refetchVinculos } = useClienteProcessos(id);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ telefone: '', email: '', endereco: '', observacoes: '' });
+  const [form, setForm] = useState({ telefone: '', email: '', endereco: '', observacoes: '', numero_whatsapp: '' });
 
   // Invite dialog state
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -94,6 +94,7 @@ export default function ClienteDetail() {
       email: cliente?.email || '',
       endereco: cliente?.endereco || '',
       observacoes: cliente?.observacoes || '',
+      numero_whatsapp: cliente?.numero_whatsapp || '',
     });
     setEditing(true);
   };
@@ -102,7 +103,12 @@ export default function ClienteDetail() {
     if (!id) return;
     setSaving(true);
     try {
-      await updateCliente(id, form);
+      const updateData: Record<string, string | null> = { ...form };
+      // If WhatsApp was added, update status to reflect complete registration
+      if (form.numero_whatsapp && cliente?.status === 'cadastro_incompleto') {
+        updateData.status = 'ativo';
+      }
+      await updateCliente(id, updateData);
       toast.success('Dados atualizados com sucesso');
       setEditing(false);
       refetch();
@@ -238,6 +244,23 @@ export default function ClienteDetail() {
         </div>
       </div>
 
+      {/* Incomplete registration banner */}
+      {(!cliente.numero_whatsapp && !cliente.telefone) && (
+        <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-300 dark:border-yellow-700 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-yellow-800 dark:text-yellow-300 text-sm">Cadastro incompleto</p>
+            <p className="text-yellow-700 dark:text-yellow-400 text-xs mt-1">
+              Este cliente foi importado automaticamente de um processo. Para receber notificações de movimentações via IA, 
+              é necessário completar o cadastro informando o <strong>número de WhatsApp</strong>.
+            </p>
+            <Button size="sm" variant="outline" className="mt-2 border-yellow-400 text-yellow-700 hover:bg-yellow-100" onClick={startEditing}>
+              Completar cadastro
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex flex-wrap gap-3">
         <Button onClick={() => setInviteOpen(true)} variant="outline">
@@ -256,6 +279,13 @@ export default function ClienteDetail() {
           <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Contato</h2>
           {editing ? (
             <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-foreground mb-1 block">
+                  📱 WhatsApp <span className="text-destructive">*</span>
+                </label>
+                <Input value={form.numero_whatsapp} onChange={e => setForm(f => ({ ...f, numero_whatsapp: e.target.value }))} placeholder="5511999999999" />
+                <p className="text-xs text-muted-foreground mt-1">Número com DDD e código do país (ex: 5511999999999). Necessário para disparos automáticos de movimentações.</p>
+              </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Telefone</label>
                 <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} placeholder="(00) 00000-0000" />
@@ -281,6 +311,13 @@ export default function ClienteDetail() {
             </div>
           ) : (
             <div className="space-y-3 text-sm">
+              <div className={`flex items-center gap-2 ${cliente.numero_whatsapp ? 'text-green-600' : 'text-destructive'}`}>
+                <MessageCircle className="h-4 w-4 shrink-0" />
+                <span>{cliente.numero_whatsapp || 'WhatsApp não informado'}</span>
+                {!cliente.numero_whatsapp && (
+                  <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded-full">Sem disparos</span>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Phone className="h-4 w-4 shrink-0" />
                 <span>{cliente.telefone || 'Não informado'}</span>
