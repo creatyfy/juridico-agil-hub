@@ -135,9 +135,9 @@ serve(async (req) => {
             if (cpfDoc) doc = cpfDoc.document;
           }
           if (!doc) continue;
-            const cleanDoc = doc.replace(/\D/g, '');
-            const tipoDoc = cleanDoc.length > 11 ? 'CNPJ' : 'CPF';
-            const tipoPessoa = cleanDoc.length > 11 ? 'juridica' : 'fisica';
+          const cleanDoc = doc.replace(/\D/g, '');
+          const tipoDoc = cleanDoc.length > 11 ? 'CNPJ' : 'CPF';
+          const tipoPessoa = cleanDoc.length > 11 ? 'juridica' : 'fisica';
 
             // Upsert client with minimal data (name + document)
             const { data: clienteUpserted, error: clienteError } = await supabase
