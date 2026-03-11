@@ -13,6 +13,7 @@ import {
   checkJuditRequestStatus,
   getJuditResults,
   importProcesses,
+  backfillClientLinks,
 } from '@/hooks/useProcessos';
 
 interface JuditProcesso {
@@ -354,6 +355,17 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       });
 
       const result = await importProcesses(toImport);
+
+      // Auto-backfill any unlinked processes with clients from parties
+      try {
+        const backfillResult = await backfillClientLinks();
+        if (backfillResult?.links_created > 0) {
+          console.log(`[ImportarProcessos] Backfill: ${backfillResult.links_created} vínculos criados`);
+        }
+      } catch (e) {
+        console.warn('[ImportarProcessos] Backfill warning:', e);
+      }
+
       toast.success(`${toImport.length} novo(s) processo(s) importado(s) com sucesso!`);
       const importedId = result?.results?.find((r: any) => r.success)?.id;
       setStep('done');

@@ -66,7 +66,7 @@ export default function AdvogadoDashboard() {
       const { count: ativos } = await supabase
         .from('clientes')
         .select('*', { count: 'exact', head: true })
-        .not('auth_user_id', 'is', null);
+        .eq('status', 'ativo');
 
       setTotalClientes(total || 0);
       setClientesAtivos(ativos || 0);

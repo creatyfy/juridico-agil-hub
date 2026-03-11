@@ -167,3 +167,11 @@ export async function activateProcessMonitoring(processoId: string) {
   if (error) throw error;
   return data;
 }
+
+export async function backfillClientLinks() {
+  const { data, error } = await supabase.functions.invoke('backfill-client-links', {
+    body: {},
+  });
+  if (error) throw error;
+  return data;
+}
