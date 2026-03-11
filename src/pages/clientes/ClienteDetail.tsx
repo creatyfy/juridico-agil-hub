@@ -244,6 +244,23 @@ export default function ClienteDetail() {
         </div>
       </div>
 
+      {/* Incomplete registration banner */}
+      {(!cliente.numero_whatsapp && !cliente.telefone) && (
+        <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-300 dark:border-yellow-700 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-yellow-800 dark:text-yellow-300 text-sm">Cadastro incompleto</p>
+            <p className="text-yellow-700 dark:text-yellow-400 text-xs mt-1">
+              Este cliente foi importado automaticamente de um processo. Para receber notificações de movimentações via IA, 
+              é necessário completar o cadastro informando o <strong>número de WhatsApp</strong>.
+            </p>
+            <Button size="sm" variant="outline" className="mt-2 border-yellow-400 text-yellow-700 hover:bg-yellow-100" onClick={startEditing}>
+              Completar cadastro
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex flex-wrap gap-3">
         <Button onClick={() => setInviteOpen(true)} variant="outline">
