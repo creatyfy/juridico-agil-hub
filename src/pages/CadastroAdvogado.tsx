@@ -161,6 +161,7 @@ export default function CadastroAdvogado() {
 
   const [submitError, setSubmitError] = useState('');
   const [resending, setResending] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'' | 'success' | 'error'>('');
 
   const handleSubmit = async () => {
     if (!validateStep2()) {
