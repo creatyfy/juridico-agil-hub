@@ -1,11 +1,13 @@
 import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Search, Download, Loader2, CheckCircle2, FileText, RefreshCw } from 'lucide-react';
+import { Search, Download, Loader2, CheckCircle2, FileText, RefreshCw, Users, Calendar, MapPin, Scale, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import {
   searchJuditProcesses,
   checkJuditRequestStatus,
@@ -26,8 +28,127 @@ interface JuditProcesso {
   status?: string;
   steps?: any[];
   movimentacoes?: any[];
-  // Flexible keys from Judit response
   [key: string]: any;
+}
+
+function ProcessCardDetails({ proc, getCnj, getCourt, getClass, getArea }: {
+  proc: JuditProcesso;
+  getCnj: (p: JuditProcesso) => string;
+  getCourt: (p: JuditProcesso) => string;
+  getClass: (p: JuditProcesso) => string;
+  getArea: (p: JuditProcesso) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const parties = proc.parties || proc.partes || [];
+  const activeParties = parties.filter((p: any) => p.side === 'Active' && p.person_type !== 'Advogado');
+  const passiveParties = parties.filter((p: any) => p.side === 'Passive' && p.person_type !== 'Advogado');
+  const vara = proc.courts?.[0]?.name || proc.vara || proc.court_division || '';
+  const date = proc.distribution_date || proc.data_distribuicao;
+  const formattedDate = date ? (() => {
+    try { return format(new Date(date), "dd/MM/yyyy", { locale: ptBR }); } catch { return date; }
+  })() : null;
+  const lastStep = proc.last_step || (proc.steps && proc.steps.length > 0 ? proc.steps[proc.steps.length - 1] : null);
+
+  return (
+    <div className="flex-1 min-w-0 space-y-1.5">
+      {/* CNJ */}
+      <div className="flex items-center gap-2">
+        <Scale className="h-3.5 w-3.5 text-accent shrink-0" />
+        <p className="font-mono text-sm font-bold tracking-wide">{getCnj(proc)}</p>
+      </div>
+
+      {/* Classe + Tribunal */}
+      <p className="text-sm font-medium text-muted-foreground">
+        {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
+      </p>
+
+      {/* Assunto + Vara + Data inline */}
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground/80">
+        {getArea(proc) && (
+          <span className="inline-flex items-center gap-1 bg-accent/8 text-accent px-2 py-0.5 rounded-md font-medium">
+            {getArea(proc)}
+          </span>
+        )}
+        {vara && (
+          <span className="inline-flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            {vara}
+          </span>
+        )}
+        {formattedDate && (
+          <span className="inline-flex items-center gap-1">
+            <Calendar className="h-3 w-3" />
+            {formattedDate}
+          </span>
+        )}
+      </div>
+
+      {/* Partes (autor/réu) - always visible */}
+      {(activeParties.length > 0 || passiveParties.length > 0) && (
+        <div className="flex items-start gap-2 text-xs text-muted-foreground/80 pt-1">
+          <Users className="h-3.5 w-3.5 mt-0.5 shrink-0 text-accent/60" />
+          <div className="space-y-0.5">
+            {activeParties.slice(0, 2).map((p: any, i: number) => (
+              <p key={`a-${i}`}><span className="font-medium text-foreground/70">Autor:</span> {p.name}</p>
+            ))}
+            {activeParties.length > 2 && !expanded && (
+              <p className="text-muted-foreground/50">+{activeParties.length - 2} autor(es)</p>
+            )}
+            {passiveParties.slice(0, 2).map((p: any, i: number) => (
+              <p key={`p-${i}`}><span className="font-medium text-foreground/70">Réu:</span> {p.name}</p>
+            ))}
+            {passiveParties.length > 2 && !expanded && (
+              <p className="text-muted-foreground/50">+{passiveParties.length - 2} réu(s)</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Expandable details */}
+      {(lastStep || (expanded && (activeParties.length > 2 || passiveParties.length > 2))) && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+          className="text-xs text-accent hover:underline flex items-center gap-1 pt-1"
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? 'Menos detalhes' : 'Mais detalhes'}
+        </button>
+      )}
+
+      {expanded && (
+        <div className="space-y-2 pt-1">
+          {/* All parties when expanded */}
+          {activeParties.length > 2 && (
+            <div className="text-xs text-muted-foreground/70 pl-5 space-y-0.5">
+              {activeParties.slice(2).map((p: any, i: number) => (
+                <p key={`ae-${i}`}><span className="font-medium">Autor:</span> {p.name}</p>
+              ))}
+            </div>
+          )}
+          {passiveParties.length > 2 && (
+            <div className="text-xs text-muted-foreground/70 pl-5 space-y-0.5">
+              {passiveParties.slice(2).map((p: any, i: number) => (
+                <p key={`pe-${i}`}><span className="font-medium">Réu:</span> {p.name}</p>
+              ))}
+            </div>
+          )}
+          {/* Last movement */}
+          {lastStep && (
+            <div className="bg-muted/30 rounded-lg p-3 text-xs space-y-1">
+              <p className="font-medium text-foreground/80">Última movimentação:</p>
+              <p className="text-muted-foreground">
+                {lastStep.date && (() => {
+                  try { return format(new Date(lastStep.date), "dd/MM/yyyy", { locale: ptBR }) + ' — '; } catch { return ''; }
+                })()}
+                {lastStep.content || lastStep.description || lastStep.descricao || JSON.stringify(lastStep).slice(0, 200)}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ImportarProcessos({ onImported }: { onImported?: () => void }) {
@@ -39,7 +160,50 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [manualCnj, setManualCnj] = useState('');
   const [importMode, setImportMode] = useState<'oab' | 'manual'>('oab');
+  const [showImported, setShowImported] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const filterAndSetResults = useCallback(async (processList: JuditProcesso[]) => {
+    const cnjs = processList.map((p: any) =>
+      p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || ''
+    ).filter(Boolean);
+
+    if (cnjs.length === 0) {
+      setResults([]);
+      setAlreadyImported([]);
+      return;
+    }
+
+    const { supabase } = await import('@/integrations/supabase/client');
+    
+    // Fetch in batches of 100 to handle large lists
+    const allExisting: string[] = [];
+    for (let i = 0; i < cnjs.length; i += 100) {
+      const batch = cnjs.slice(i, i + 100);
+      const { data: existing } = await supabase
+        .from('processos')
+        .select('numero_cnj')
+        .eq('user_id', user!.id)
+        .in('numero_cnj', batch);
+      if (existing) allExisting.push(...existing.map((p: any) => p.numero_cnj));
+    }
+
+    const existingCnjs = new Set(allExisting);
+
+    const novos = processList.filter((p: any) => {
+      const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+      return cnj && !existingCnjs.has(cnj);
+    });
+
+    const jaImportados = processList.filter((p: any) => {
+      const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
+      return cnj && existingCnjs.has(cnj);
+    });
+
+    setResults(novos);
+    setAlreadyImported(jaImportados);
+    setSelected(new Set(novos.map((_: any, i: number) => i)));
+  }, [user]);
 
   const handleSearchByOab = useCallback(async () => {
     if (!user?.oab || !user?.uf) {
@@ -60,11 +224,10 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
         return;
       }
 
-      // Poll for results
       let attempts = 0;
       const poll = async () => {
         attempts++;
-        if (attempts > 24) { // max ~2 min
+        if (attempts > 60) { // max ~5 min for large results
           toast.error('Timeout na busca. Tente novamente.');
           setStep('idle');
           return;
@@ -75,37 +238,10 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
         if (requestStatus === 'completed' || requestStatus === 'done') {
           const resultsData = await getJuditResults(requestId);
-          // Judit returns { page_data: [{ response_data: {...} }] }
           const pageData = resultsData?.page_data || resultsData?.data || [];
           const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
 
-          // Filtrar processos já importados
-          const cnjs = processList.map((p: any) =>
-            p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || ''
-          ).filter(Boolean);
-
-          const { supabase } = await import('@/integrations/supabase/client');
-          const { data: existing } = await supabase
-            .from('processos')
-            .select('numero_cnj')
-            .eq('user_id', user!.id)
-            .in('numero_cnj', cnjs);
-
-          const existingCnjs = new Set((existing || []).map((p: any) => p.numero_cnj));
-
-          const novos = processList.filter((p: any) => {
-            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
-            return cnj && !existingCnjs.has(cnj);
-          });
-
-          const jaImportados = processList.filter((p: any) => {
-            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
-            return cnj && existingCnjs.has(cnj);
-          });
-
-          setResults(novos);
-          setAlreadyImported(jaImportados);
-          setSelected(new Set(novos.map((_: any, i: number) => i)));
+          await filterAndSetResults(processList);
           setStep('results');
           toast.success(`${processList.length} processo(s) encontrado(s)`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -121,7 +257,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       toast.error(err.message || 'Erro ao buscar processos');
       setStep('idle');
     }
-  }, [user]);
+  }, [user, filterAndSetResults]);
 
   const handleSearchManual = useCallback(async () => {
     if (!manualCnj.trim()) {
@@ -164,33 +300,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           const pageData = resultsData?.page_data || resultsData?.data || [];
           const processList = pageData.map((item: any) => item.response_data || item).filter(Boolean);
 
-          // Filtrar processos já importados
-          const cnjs = processList.map((p: any) =>
-            p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || ''
-          ).filter(Boolean);
-
-          const { supabase } = await import('@/integrations/supabase/client');
-          const { data: existing } = await supabase
-            .from('processos')
-            .select('numero_cnj')
-            .eq('user_id', user!.id)
-            .in('numero_cnj', cnjs);
-
-          const existingCnjs = new Set((existing || []).map((p: any) => p.numero_cnj));
-
-          const novos = processList.filter((p: any) => {
-            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
-            return cnj && !existingCnjs.has(cnj);
-          });
-
-          const jaImportados = processList.filter((p: any) => {
-            const cnj = p.code || p.lawsuit_cnj || p.lawsuit_number || p.cnj || p.numero || '';
-            return cnj && existingCnjs.has(cnj);
-          });
-
-          setResults(novos);
-          setAlreadyImported(jaImportados);
-          setSelected(new Set(novos.map((_: any, i: number) => i)));
+          await filterAndSetResults(processList);
           setStep('results');
           toast.success(`Processo encontrado`);
         } else if (requestStatus === 'failed' || requestStatus === 'error') {
@@ -206,7 +316,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       toast.error(err.message || 'Erro na busca');
       setStep('idle');
     }
-  }, [manualCnj, user]);
+  }, [manualCnj, user, filterAndSetResults]);
 
   const handleImport = useCallback(async () => {
     if (selected.size === 0) {
@@ -299,7 +409,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           </p>
           <Button onClick={handleSearchByOab}>
             <Search className="h-4 w-4 mr-2" />
-            Buscar Processos
+            Buscar Todos os Processos
           </Button>
         </div>
       )}
@@ -329,7 +439,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
           <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-primary" />
           <h3 className="text-lg font-semibold">Consultando API Judit...</h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Isso pode levar até 2 minutos. Não feche esta página.
+            Buscando todos os processos ativos. Isso pode levar alguns minutos.
           </p>
         </div>
       )}
@@ -337,10 +447,23 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
       {/* Results */}
       {step === 'results' && (
         <div className="space-y-4">
+          {/* Summary bar */}
+          <div className="bg-muted/30 rounded-lg p-4 flex flex-wrap items-center gap-4 text-sm">
+            <span className="font-medium">
+              <span className="text-accent font-bold">{results.length}</span> novo(s)
+            </span>
+            <span className="text-muted-foreground">
+              <span className="font-bold">{alreadyImported.length}</span> já importado(s)
+            </span>
+            <span className="text-muted-foreground">
+              <span className="font-bold">{results.length + alreadyImported.length}</span> total encontrado(s)
+            </span>
+          </div>
+
           {results.length > 0 && (
             <>
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">{results.length} novos processos encontrados</h3>
+                <h3 className="text-lg font-semibold">Processos disponíveis para importar</h3>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={toggleAll}>
                     {selected.size === results.length ? 'Desmarcar todos' : 'Selecionar todos'}
@@ -356,8 +479,7 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
                 {results.map((proc, idx) => (
                   <div
                     key={idx}
-                    className={`card-elevated p-4 flex items-start gap-3 cursor-pointer transition-colors ${selected.has(idx) ? 'ring-2 ring-primary/50 bg-primary/5' : ''
-                      }`}
+                    className={`card-elevated p-4 flex items-start gap-3 cursor-pointer transition-colors ${selected.has(idx) ? 'ring-2 ring-primary/50 bg-primary/5' : ''}`}
                     onClick={() => toggleSelect(idx)}
                   >
                     <Checkbox
@@ -365,18 +487,13 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
                       onCheckedChange={() => toggleSelect(idx)}
                       className="mt-1"
                     />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-mono text-sm font-semibold">{getCnj(proc)}</p>
-                      <p className="text-sm text-muted-foreground mt-0.5">
-                        {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
-                      </p>
-                      {(getArea(proc)) && (
-                        <p className="text-xs text-muted-foreground/70 mt-0.5">
-                          {getArea(proc)}
-                        </p>
-                      )}
-                    </div>
-                    <FileText className="h-5 w-5 text-muted-foreground/30 shrink-0" />
+                    <ProcessCardDetails
+                      proc={proc}
+                      getCnj={getCnj}
+                      getCourt={getCourt}
+                      getClass={getClass}
+                      getArea={getArea}
+                    />
                   </div>
                 ))}
               </div>
@@ -385,31 +502,39 @@ export default function ImportarProcessos({ onImported }: { onImported?: () => v
 
           {results.length === 0 && alreadyImported.length > 0 && (
             <div className="card-elevated p-12 text-center">
-              <FileText className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
-              <h3 className="text-lg font-semibold text-muted-foreground">✅ Todos os seus processos já estão cadastrados no sistema.</h3>
+              <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-green-500" />
+              <h3 className="text-lg font-semibold">✅ Todos os seus processos já estão cadastrados no sistema.</h3>
+              <p className="text-sm text-muted-foreground mt-2">
+                {alreadyImported.length} processo(s) encontrado(s), todos já importados.
+              </p>
             </div>
           )}
 
           {alreadyImported.length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold">{alreadyImported.length} processos já cadastrados</h3>
-              {alreadyImported.map((proc, idx) => (
+              <button
+                type="button"
+                onClick={() => setShowImported(!showImported)}
+                className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showImported ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {alreadyImported.length} processo(s) já importado(s)
+              </button>
+              {showImported && alreadyImported.map((proc, idx) => (
                 <div
                   key={`imported-${idx}`}
-                  className="card-elevated p-4 flex items-start gap-3 bg-muted/20"
+                  className="card-elevated p-4 flex items-start gap-3 bg-muted/20 opacity-60"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm font-semibold text-muted-foreground">{getCnj(proc)}</p>
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                      {getClass(proc)}{getCourt(proc) ? ` • ${getCourt(proc)}` : ''}
-                    </p>
-                    {(getArea(proc)) && (
-                      <p className="text-xs text-muted-foreground/70 mt-0.5">
-                        {getArea(proc)}
-                      </p>
-                    )}
+                    <ProcessCardDetails
+                      proc={proc}
+                      getCnj={getCnj}
+                      getCourt={getCourt}
+                      getClass={getClass}
+                      getArea={getArea}
+                    />
                   </div>
-                  <Badge variant="secondary">Já importado</Badge>
+                  <Badge variant="secondary" className="shrink-0">Já importado</Badge>
                 </div>
               ))}
             </div>
