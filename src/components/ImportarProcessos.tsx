@@ -13,6 +13,7 @@ import {
   checkJuditRequestStatus,
   getJuditResults,
   importProcesses,
+  backfillClientLinks,
 } from '@/hooks/useProcessos';
 
 interface JuditProcesso {
