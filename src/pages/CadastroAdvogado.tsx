@@ -663,7 +663,17 @@ export default function CadastroAdvogado() {
                     Ir para o Login
                   </Button>
                 </Link>
-                <p className="text-xs text-muted-foreground">
+                {resendStatus === 'success' && (
+                  <div className="mt-4 p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700 max-w-sm mx-auto">
+                    ✓ E-mail reenviado! Verifique sua caixa de entrada e spam.
+                  </div>
+                )}
+                {resendStatus === 'error' && (
+                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive max-w-sm mx-auto">
+                    Erro ao reenviar e-mail. Tente novamente em alguns minutos.
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-4">
                   Não recebeu?{' '}
                   <button
                     onClick={handleResendEmail}
