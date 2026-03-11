@@ -117,9 +117,6 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
           limit: 5,
           lang: 'pt-br',
           country: 'br',
-          scrapeOptions: {
-            formats: ['markdown'],
-          },
         }),
       });
 
