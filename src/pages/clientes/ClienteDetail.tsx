@@ -103,7 +103,12 @@ export default function ClienteDetail() {
     if (!id) return;
     setSaving(true);
     try {
-      await updateCliente(id, form);
+      const updateData: Record<string, string | null> = { ...form };
+      // If WhatsApp was added, update status to reflect complete registration
+      if (form.numero_whatsapp && cliente?.status === 'cadastro_incompleto') {
+        updateData.status = 'ativo';
+      }
+      await updateCliente(id, updateData);
       toast.success('Dados atualizados com sucesso');
       setEditing(false);
       refetch();
