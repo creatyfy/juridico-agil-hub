@@ -305,6 +305,7 @@ export default function ProcessoDetail() {
                 date={mov.data_movimentacao ? new Date(mov.data_movimentacao).toLocaleDateString('pt-BR') : 'Sem data'}
                 title={mov.tipo || 'Movimentação'}
                 description={mov.descricao}
+                content={mov.conteudo}
                 type={idx === 0 ? 'important' : 'default'}
                 isLast={idx === movimentacoes.length - 1}
               />

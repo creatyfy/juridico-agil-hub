@@ -5,11 +5,15 @@ interface TimelineEventProps {
   date: string;
   title: string;
   description: string;
+  content?: string | null;
   type?: 'default' | 'important' | 'alert';
   isLast?: boolean;
 }
 
-export default function TimelineEvent({ date, title, description, type = 'default', isLast }: TimelineEventProps) {
+export default function TimelineEvent({ date, title, description, content, type = 'default', isLast }: TimelineEventProps) {
+  // Show content if different from description
+  const showContent = content && content !== description;
+
   return (
     <div className="flex gap-4">
       <div className="flex flex-col items-center">
@@ -30,6 +34,11 @@ export default function TimelineEvent({ date, title, description, type = 'defaul
         </div>
         <h4 className="text-sm font-semibold">{title}</h4>
         <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
+        {showContent && (
+          <p className="text-xs text-muted-foreground/70 mt-1 italic border-l-2 border-accent/30 pl-2">
+            {content}
+          </p>
+        )}
       </div>
     </div>
   );

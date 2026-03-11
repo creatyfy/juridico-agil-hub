@@ -92,11 +92,11 @@ serve(async (req) => {
       if (proc.movimentacoes && Array.isArray(proc.movimentacoes)) {
         const movs = proc.movimentacoes.map((m: any) => ({
           processo_id: processo.id,
-          data_movimentacao: m.data_movimentacao || m.date,
-          tipo: m.tipo || m.type,
-          descricao: m.descricao || m.description || m.content || 'Movimentação',
-          conteudo: m.conteudo || m.content,
-          judit_movement_id: m.id || m.judit_movement_id,
+          data_movimentacao: m.data_movimentacao || m.date || m.datetime || m.created_at || null,
+          tipo: m.tipo || m.type || m.name || null,
+          descricao: m.descricao || m.description || m.content || m.complement || 'Movimentação',
+          conteudo: m.conteudo || m.content || m.complement || m.description || null,
+          judit_movement_id: m.id ? String(m.id) : (m.judit_movement_id || null),
         }));
 
         if (movs.length > 0) {
