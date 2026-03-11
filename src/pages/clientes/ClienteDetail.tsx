@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle, MessageSquare } from 'lucide-react';
+import { ArrowLeft, User, FileText, Phone, Mail, MapPin, Save, Scale, Send, Copy, Check, Loader2, MessageCircle, MessageSquare, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
