@@ -175,7 +175,7 @@ export default function CadastroAdvogado() {
         email: form.email,
         password: form.senha,
         options: {
-          emailRedirectTo: window.location.origin + '/login',
+          emailRedirectTo: (import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online') + '/login',
           data: {
             full_name: form.nomeCompleto,
             oab: form.oab,
@@ -222,14 +222,16 @@ export default function CadastroAdvogado() {
         type: 'signup',
         email: form.email,
         options: {
-          emailRedirectTo: window.location.origin + '/login',
+          emailRedirectTo: (import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online') + '/login',
         },
       });
-      if (!error) {
-        alert('E-mail reenviado! Verifique sua caixa de entrada.');
+      if (error) {
+        alert('Erro ao reenviar e-mail: ' + error.message);
+      } else {
+        alert('E-mail reenviado! Verifique sua caixa de entrada e spam.');
       }
     } catch {
-      // ignore
+      alert('Erro ao reenviar e-mail. Tente novamente.');
     } finally {
       setResending(false);
     }

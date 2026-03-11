@@ -78,7 +78,7 @@ export default function AceitarConvite() {
             cpf: data?.cliente.documento,
             role: 'cliente',
           },
-          emailRedirectTo: `${window.location.origin}/login`,
+          emailRedirectTo: `${import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online'}/login`,
         },
       });
       if (signUpError) throw signUpError;
