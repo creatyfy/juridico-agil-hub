@@ -280,6 +280,13 @@ export default function ClienteDetail() {
           {editing ? (
             <div className="space-y-3">
               <div>
+                <label className="text-xs font-medium text-foreground mb-1 block">
+                  📱 WhatsApp <span className="text-destructive">*</span>
+                </label>
+                <Input value={form.numero_whatsapp} onChange={e => setForm(f => ({ ...f, numero_whatsapp: e.target.value }))} placeholder="5511999999999" />
+                <p className="text-xs text-muted-foreground mt-1">Número com DDD e código do país (ex: 5511999999999). Necessário para disparos automáticos de movimentações.</p>
+              </div>
+              <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Telefone</label>
                 <Input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} placeholder="(00) 00000-0000" />
               </div>
