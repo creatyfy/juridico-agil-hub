@@ -118,7 +118,7 @@ export default function ClienteDetail() {
     try {
       const result = await convidarProcesso(id, selectedProcesso);
       if (result.token) {
-        const publishedUrl = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
+        const publishedUrl = 'https://jarvisjud.online';
         const link = `${publishedUrl}/convite/${result.token}`;
         setInviteLink(link);
         toast.success(result.emailSent ? 'Convite enviado por e-mail!' : 'Convite criado com sucesso!');
@@ -157,7 +157,7 @@ export default function ClienteDetail() {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       if (data?.id) {
-        const publishedUrl = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
+        const publishedUrl = 'https://jarvisjud.online';
         const link = `${publishedUrl}/vincular?id=${data.id}`;
         setVinculacaoLink(link);
         toast.success('Link de vinculação gerado!');
