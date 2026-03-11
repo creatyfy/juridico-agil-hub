@@ -224,7 +224,7 @@ export default function CadastroAdvogado() {
         type: 'signup',
         email: form.email,
         options: {
-          emailRedirectTo: (import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online') + '/login',
+          emailRedirectTo: 'https://jarvisjud.online/login',
         },
       });
       if (error) {
