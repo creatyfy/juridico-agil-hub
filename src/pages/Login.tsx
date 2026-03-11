@@ -32,8 +32,61 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  const PROD_URL = import.meta.env.VITE_SITE_URL || 'https://jarvisjud.online';
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    let targetEmail = forgotEmail;
+
+    // If in OAB mode and no email provided, look up via OAB
+    if (mode === 'oab' && oab && uf && !forgotEmail) {
+      setForgotLoading(true);
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke('login-oab', {
+          body: { action: 'lookup', oab, uf },
+        });
+        if (fnError || data?.error) {
+          setError('OAB não encontrada. Verifique os dados.');
+          setForgotLoading(false);
+          return;
+        }
+        targetEmail = data.email;
+      } catch {
+        setError('Erro ao buscar e-mail da OAB.');
+        setForgotLoading(false);
+        return;
+      }
+    }
+
+    if (!targetEmail) {
+      setError('Informe seu e-mail para recuperar a senha.');
+      return;
+    }
+
+    setForgotLoading(true);
+    setError('');
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+        redirectTo: `${PROD_URL}/reset-password`,
+      });
+      if (resetError) {
+        setError(resetError.message);
+      } else {
+        setForgotSent(true);
+      }
+    } catch {
+      setError('Erro ao enviar e-mail de recuperação.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
