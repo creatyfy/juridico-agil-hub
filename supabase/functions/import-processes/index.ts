@@ -122,9 +122,19 @@ serve(async (req) => {
       // Extract and upsert clientes from Active side parties + link via cliente_processos
       if (proc.partes && Array.isArray(proc.partes)) {
         for (const parte of proc.partes) {
-          if (parte.side === 'Active' && parte.person_type !== 'Advogado' && parte.name) {
-            const doc = parte.main_document || null;
-            if (!doc) continue; // Skip parties without document
+          const isActive = parte.side === 'Active';
+          const isAdvogado = (parte.person_type || '').toLowerCase().includes('advogado');
+          if (!isActive || isAdvogado || !parte.name) continue;
+
+          // Get document from main_document or documents array
+          let doc = parte.main_document || null;
+          if (!doc && Array.isArray(parte.documents)) {
+            const cpfDoc = parte.documents.find((d: any) =>
+              d.document_type?.toUpperCase() === 'CPF' || d.document_type?.toUpperCase() === 'CNPJ'
+            );
+            if (cpfDoc) doc = cpfDoc.document;
+          }
+          if (!doc) continue;
             const cleanDoc = doc.replace(/\D/g, '');
             const tipoDoc = cleanDoc.length > 11 ? 'CNPJ' : 'CPF';
             const tipoPessoa = cleanDoc.length > 11 ? 'juridica' : 'fisica';
