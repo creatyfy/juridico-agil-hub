@@ -64,12 +64,32 @@ serve(async (req) => {
       return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const data = await juditRequest({
-      tenantKey: user.id,
-      apiKey: tenantApiKey,
-      path: `/responses?request_id=${request_id}`,
-    })
-    return new Response(JSON.stringify(data), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    // action === 'results' — fetch ALL pages
+    const allPageData: unknown[] = [];
+    let page = 1;
+    const maxPages = 50; // safety limit
+
+    while (page <= maxPages) {
+      const data = await juditRequest({
+        tenantKey: user.id,
+        apiKey: tenantApiKey,
+        path: `/responses?request_id=${request_id}&page=${page}`,
+      });
+
+      const pageData = data?.page_data || data?.data || [];
+      if (pageData.length === 0) break;
+
+      allPageData.push(...pageData);
+
+      // Check if there are more pages
+      const totalPages = data?.total_pages || data?.last_page || 1;
+      if (page >= totalPages) break;
+      page++;
+    }
+
+    return new Response(JSON.stringify({ page_data: allPageData, total: allPageData.length }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(JSON.stringify({ error: message }), {
