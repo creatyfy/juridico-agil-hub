@@ -94,6 +94,7 @@ export default function ClienteDetail() {
       email: cliente?.email || '',
       endereco: cliente?.endereco || '',
       observacoes: cliente?.observacoes || '',
+      numero_whatsapp: cliente?.numero_whatsapp || '',
     });
     setEditing(true);
   };
