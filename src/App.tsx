@@ -52,6 +52,7 @@ function AppRoutes() {
       <Route path="/cadastro/advogado" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <CadastroAdvogado />} />
       <Route path="/convite/:token" element={<AceitarConvite />} />
       <Route path="/vincular" element={<VincularWhatsApp />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/planos" element={<Planos />} />
       <Route path="/Checkout" element={<Navigate to="/checkout" replace />} />
       <Route path="/checkout" element={<Checkout />} />
