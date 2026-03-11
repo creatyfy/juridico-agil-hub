@@ -139,63 +139,61 @@ serve(async (req) => {
           const tipoDoc = cleanDoc.length > 11 ? 'CNPJ' : 'CPF';
           const tipoPessoa = cleanDoc.length > 11 ? 'juridica' : 'fisica';
 
-            // Upsert client with minimal data (name + document)
-            const { data: clienteUpserted, error: clienteError } = await supabase
-              .from('clientes')
-              .upsert({
-                user_id: user.id,
-                nome: parte.name,
-                documento: doc,
-                tipo_documento: tipoDoc,
-                tipo_pessoa: tipoPessoa,
-                status: 'cadastro_incompleto',
-              }, { onConflict: 'user_id,documento', ignoreDuplicates: false })
-              .select('id')
-              .single();
+          // Upsert client with minimal data (name + document)
+          const { data: clienteUpserted, error: clienteError } = await supabase
+            .from('clientes')
+            .upsert({
+              user_id: user.id,
+              nome: parte.name,
+              documento: doc,
+              tipo_documento: tipoDoc,
+              tipo_pessoa: tipoPessoa,
+              status: 'cadastro_incompleto',
+            }, { onConflict: 'user_id,documento', ignoreDuplicates: false })
+            .select('id')
+            .single();
 
-            if (clienteError) {
-              const planLimitReached = clienteError.message?.includes('plan_limit_reached') || clienteError.code === 'P0001';
-              if (planLimitReached) {
-                return new Response(JSON.stringify({ error: 'plan_limit_reached' }), {
-                  status: 409,
-                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                });
-              }
-              console.error('Error upserting cliente:', clienteError);
-              continue;
-            }
-
-            if (clienteUpserted?.id) {
-              // Auto-link client to process via cliente_processos
-              const { error: linkError } = await supabase
-                .from('cliente_processos')
-                .upsert({
-                  cliente_id: clienteUpserted.id,
-                  processo_id: processo.id,
-                  advogado_user_id: user.id,
-                  status: 'ativo',
-                  data_aceite: new Date().toISOString(),
-                }, { onConflict: 'cliente_id,processo_id' });
-
-              if (linkError) {
-                console.error('Error linking cliente to processo:', linkError);
-              }
-
-              await logTenantAction(supabase, {
-                tenantId: user.id,
-                userId: user.id,
-                action: 'cadastro_created',
-                entity: 'cliente',
-                entityId: clienteUpserted.id,
-                metadata: {
-                  source: 'import_processes',
-                  processo_numero_cnj: proc.numero_cnj,
-                  nome: parte.name,
-                  tipo_documento: tipoDoc,
-                  auto_linked: true,
-                },
+          if (clienteError) {
+            const planLimitReached = clienteError.message?.includes('plan_limit_reached') || clienteError.code === 'P0001';
+            if (planLimitReached) {
+              return new Response(JSON.stringify({ error: 'plan_limit_reached' }), {
+                status: 409,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
               });
             }
+            console.error('Error upserting cliente:', clienteError);
+            continue;
+          }
+
+          if (clienteUpserted?.id) {
+            const { error: linkError } = await supabase
+              .from('cliente_processos')
+              .upsert({
+                cliente_id: clienteUpserted.id,
+                processo_id: processo.id,
+                advogado_user_id: user.id,
+                status: 'ativo',
+                data_aceite: new Date().toISOString(),
+              }, { onConflict: 'cliente_id,processo_id' });
+
+            if (linkError) {
+              console.error('Error linking cliente to processo:', linkError);
+            }
+
+            await logTenantAction(supabase, {
+              tenantId: user.id,
+              userId: user.id,
+              action: 'cadastro_created',
+              entity: 'cliente',
+              entityId: clienteUpserted.id,
+              metadata: {
+                source: 'import_processes',
+                processo_numero_cnj: proc.numero_cnj,
+                nome: parte.name,
+                tipo_documento: tipoDoc,
+                auto_linked: true,
+              },
+            });
           }
         }
       }
