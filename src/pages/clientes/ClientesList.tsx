@@ -1,4 +1,4 @@
-import { Search, Users, User, FileText } from 'lucide-react';
+import { Search, Users, User, FileText, AlertTriangle, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useClientes } from '@/hooks/useClientes';
