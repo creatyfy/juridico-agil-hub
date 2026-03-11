@@ -76,10 +76,10 @@ async function collectCompletedRequest(params: {
       .filter((s) => s.id && !existingIds.has(String(s.id)))
       .map((s) => ({
         processo_id: processo.id,
-        data_movimentacao: s.date || s.data,
-        tipo: s.type || s.tipo,
-        descricao: s.content || s.description || s.descricao || "Movimentação",
-        conteudo: s.content || s.descricao,
+        data_movimentacao: s.date || s.data || s.datetime || s.created_at || null,
+        tipo: s.type || s.tipo || s.name,
+        descricao: s.content || s.description || s.descricao || s.complement || 'Movimentação',
+        conteudo: s.content || s.descricao || s.complement || s.description,
         judit_movement_id: String(s.id),
       }));
 
