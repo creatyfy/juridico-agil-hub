@@ -311,6 +311,13 @@ export default function ClienteDetail() {
             </div>
           ) : (
             <div className="space-y-3 text-sm">
+              <div className={`flex items-center gap-2 ${cliente.numero_whatsapp ? 'text-green-600' : 'text-destructive'}`}>
+                <MessageCircle className="h-4 w-4 shrink-0" />
+                <span>{cliente.numero_whatsapp || 'WhatsApp não informado'}</span>
+                {!cliente.numero_whatsapp && (
+                  <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded-full">Sem disparos</span>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Phone className="h-4 w-4 shrink-0" />
                 <span>{cliente.telefone || 'Não informado'}</span>
