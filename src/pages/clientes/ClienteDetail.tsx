@@ -19,7 +19,7 @@ export default function ClienteDetail() {
   const { vinculos, refetch: refetchVinculos } = useClienteProcessos(id);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ telefone: '', email: '', endereco: '', observacoes: '' });
+  const [form, setForm] = useState({ telefone: '', email: '', endereco: '', observacoes: '', numero_whatsapp: '' });
 
   // Invite dialog state
   const [inviteOpen, setInviteOpen] = useState(false);
