@@ -13,6 +13,9 @@ export interface Cliente {
   email: string | null;
   endereco: string | null;
   observacoes: string | null;
+  numero_whatsapp: string | null;
+  status: string | null;
+  status_vinculo: string | null;
   created_at: string;
   updated_at: string;
 }
