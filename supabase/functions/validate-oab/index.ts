@@ -33,16 +33,9 @@ serve(async (req: Request) => {
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
     const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
 
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'Serviço de consulta não configurado' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    const result = await queryCNA(apiKey, cleanOab, uf);
+    const result = await queryCNA(cleanOab, uf, apiKey);
     if (result) {
       console.log(`Result: ${result.nome} - ${result.status}`);
       return new Response(
@@ -67,82 +60,105 @@ serve(async (req: Request) => {
 });
 
 /**
- * Query CNA (cna.oab.org.br) via Firecrawl scrape.
- * The CNA Search endpoint returns JSON when accessed via GET:
- * {"Success":true,"Data":[{"Nome":"...","TipoInscOab":"ADVOGADO","Inscricao":"...","UF":"..."}]}
+ * Query CNA (cna.oab.org.br) - tries direct API call first, then Firecrawl fallback.
  */
-async function queryCNA(apiKey: string, oab: string, uf: string) {
-  try {
-    const searchUrl = `https://cna.oab.org.br/Home/Search?NomeAdvo=&Insc=${oab}&Uf=${uf}`;
-    console.log(`Querying CNA: ${searchUrl}`);
+async function queryCNA(oab: string, uf: string, firecrawlKey?: string) {
+  const searchUrl = `https://cna.oab.org.br/Home/Search?NomeAdvo=&Insc=${oab}&Uf=${uf}`;
 
+  // Attempt 1: Direct fetch to CNA API
+  try {
+    console.log(`Querying CNA directly: ${searchUrl}`);
+    const directResponse = await fetch(searchUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://cna.oab.org.br/',
+      },
+    });
+
+    if (directResponse.ok) {
+      const text = await directResponse.text();
+      console.log(`CNA direct response: status=${directResponse.status}, len=${text.length}`);
+
+      const parsed = parseCNAJson(text, oab, uf);
+      if (parsed) return parsed;
+
+      console.log('CNA direct response was not valid JSON or had no results');
+    } else {
+      console.log(`CNA direct response failed: ${directResponse.status}`);
+    }
+  } catch (error) {
+    console.error('Direct CNA fetch error:', error);
+  }
+
+  // Attempt 2: Firecrawl scrape fallback
+  if (!firecrawlKey) {
+    console.log('No Firecrawl API key, skipping fallback');
+    return null;
+  }
+
+  try {
+    console.log('Using Firecrawl fallback...');
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${firecrawlKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         url: searchUrl,
         formats: ['markdown'],
         onlyMainContent: false,
-        waitFor: 3000,
+        waitFor: 5000,
       }),
     });
 
     const data = await response.json();
-    const content = data.data || data;
-    const markdown = content?.markdown || '';
+    const markdown = data?.data?.markdown || data?.markdown || '';
+    console.log(`Firecrawl response: status=${response.status}, len=${markdown.length}`);
 
-    console.log(`CNA response: ${response.status}, len=${markdown.length}`);
+    if (!markdown || markdown.length < 10) return null;
 
-    if (!markdown || markdown.length < 10) {
-      if (data.error) console.error('Firecrawl error:', JSON.stringify(data.error));
-      return null;
-    }
-
-    // The CNA endpoint returns JSON wrapped in markdown code block
-    // Extract the JSON from the markdown
-    let jsonStr = markdown;
-    
-    // Remove markdown code block wrapper if present
+    // Try extracting JSON from markdown code block
     const jsonMatch = markdown.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim();
-    }
+    const jsonStr = jsonMatch ? jsonMatch[1].trim() : markdown;
 
-    try {
-      const cnaData = JSON.parse(jsonStr);
-      
-      if (cnaData.Success && cnaData.Data && cnaData.Data.length > 0) {
-        const lawyer = cnaData.Data[0];
-        console.log(`CNA found: ${lawyer.Nome} (${lawyer.TipoInscOab})`);
-        
-        return {
-          nome: lawyer.Nome?.toUpperCase() || null,
-          status: 'ativo' as const,
-          inscricao: lawyer.Inscricao || oab,
-          uf: lawyer.UF || uf,
-          tipo: lawyer.TipoInscOab || null,
-        };
-      }
-      
-      console.log('CNA returned no results');
-      return null;
-    } catch {
-      // Not JSON - try regex extraction
-      console.log('CNA response not JSON, trying regex...');
-      return extractFromText(markdown, oab, uf);
-    }
+    const parsed = parseCNAJson(jsonStr, oab, uf);
+    if (parsed) return parsed;
+
+    // Last resort: regex extraction
+    return extractFromText(markdown, oab, uf);
   } catch (error) {
-    console.error('CNA query failed:', error);
+    console.error('Firecrawl fallback error:', error);
+  }
+
+  return null;
+}
+
+function parseCNAJson(text: string, oab: string, uf: string) {
+  try {
+    const cnaData = JSON.parse(text);
+    if (cnaData.Success && cnaData.Data && cnaData.Data.length > 0) {
+      const lawyer = cnaData.Data[0];
+      console.log(`CNA found: ${lawyer.Nome} (${lawyer.TipoInscOab})`);
+      return {
+        nome: lawyer.Nome?.toUpperCase() || null,
+        status: 'ativo' as const,
+        inscricao: lawyer.Inscricao || oab,
+        uf: lawyer.UF || uf,
+        tipo: lawyer.TipoInscOab || null,
+      };
+    }
+    if (cnaData.Success) {
+      console.log('CNA returned Success but empty Data');
+    }
+  } catch {
+    // Not valid JSON
   }
   return null;
 }
 
-/**
- * Fallback: extract from text/HTML if JSON parsing fails
- */
 function extractFromText(text: string, oab: string, uf: string) {
   const namePatterns = [
     /Nome:\s*([A-ZÀ-ÖØ-Ýa-zà-öø-ý\s]{5,100})/i,
@@ -163,6 +179,5 @@ function extractFromText(text: string, oab: string, uf: string) {
       }
     }
   }
-
   return null;
 }
