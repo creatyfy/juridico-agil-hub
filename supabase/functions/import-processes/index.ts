@@ -107,31 +107,27 @@ serve(async (req) => {
         }
       }
 
-      // Extract and upsert clientes from Active side parties
+      // Extract and upsert clientes from Active side parties + link via cliente_processos
       if (proc.partes && Array.isArray(proc.partes)) {
         for (const parte of proc.partes) {
           if (parte.side === 'Active' && parte.person_type !== 'Advogado' && parte.name) {
             const doc = parte.main_document || null;
-            const tipoDoc = doc && doc.length > 14 ? 'CNPJ' : 'CPF';
-            const tipoPessoa = doc && doc.length > 14 ? 'juridica' : 'fisica';
-            const { data: existingCliente } = await supabase
-              .from('clientes')
-              .select('id')
-              .eq('tenant_id', user.id)
-              .eq('documento', doc)
-              .maybeSingle();
+            if (!doc) continue; // Skip parties without document
+            const cleanDoc = doc.replace(/\D/g, '');
+            const tipoDoc = cleanDoc.length > 11 ? 'CNPJ' : 'CPF';
+            const tipoPessoa = cleanDoc.length > 11 ? 'juridica' : 'fisica';
 
+            // Upsert client with minimal data (name + document)
             const { data: clienteUpserted, error: clienteError } = await supabase
               .from('clientes')
               .upsert({
-                tenant_id: user.id,
                 user_id: user.id,
                 nome: parte.name,
                 documento: doc,
-                cpf: tipoDoc === 'CPF' && doc ? doc.replace(/\D/g, '') : null,
                 tipo_documento: tipoDoc,
                 tipo_pessoa: tipoPessoa,
-              }, { onConflict: 'user_id,documento' })
+                status: 'cadastro_incompleto',
+              }, { onConflict: 'user_id,documento', ignoreDuplicates: false })
               .select('id')
               .single();
 
@@ -147,7 +143,22 @@ serve(async (req) => {
               continue;
             }
 
-            if (!existingCliente?.id && clienteUpserted?.id) {
+            if (clienteUpserted?.id) {
+              // Auto-link client to process via cliente_processos
+              const { error: linkError } = await supabase
+                .from('cliente_processos')
+                .upsert({
+                  cliente_id: clienteUpserted.id,
+                  processo_id: processo.id,
+                  advogado_user_id: user.id,
+                  status: 'ativo',
+                  data_aceite: new Date().toISOString(),
+                }, { onConflict: 'cliente_id,processo_id' });
+
+              if (linkError) {
+                console.error('Error linking cliente to processo:', linkError);
+              }
+
               await logTenantAction(supabase, {
                 tenantId: user.id,
                 userId: user.id,
@@ -159,6 +170,7 @@ serve(async (req) => {
                   processo_numero_cnj: proc.numero_cnj,
                   nome: parte.name,
                   tipo_documento: tipoDoc,
+                  auto_linked: true,
                 },
               });
             }
