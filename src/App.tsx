@@ -21,6 +21,7 @@ import CadastroAdvogado from "./pages/CadastroAdvogado";
 import AceitarConvite from "./pages/convite/AceitarConvite";
 import VincularWhatsApp from "./pages/vinculacao/VincularWhatsApp";
 import NotFound from "./pages/NotFound";
+import ResetPassword from "./pages/ResetPassword";
 import Planos from './pages/Planos';
 import Checkout from './pages/Checkout';
 import CheckoutSuccess from './pages/CheckoutSuccess';
