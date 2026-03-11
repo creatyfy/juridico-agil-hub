@@ -217,6 +217,7 @@ export default function CadastroAdvogado() {
 
   const handleResendEmail = async () => {
     setResending(true);
+    setResendStatus('');
     try {
       const { error } = await supabase.auth.resend({
         type: 'signup',
@@ -226,12 +227,12 @@ export default function CadastroAdvogado() {
         },
       });
       if (error) {
-        alert('Erro ao reenviar e-mail: ' + error.message);
+        setResendStatus('error');
       } else {
-        alert('E-mail reenviado! Verifique sua caixa de entrada e spam.');
+        setResendStatus('success');
       }
     } catch {
-      alert('Erro ao reenviar e-mail. Tente novamente.');
+      setResendStatus('error');
     } finally {
       setResending(false);
     }
