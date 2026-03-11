@@ -82,6 +82,19 @@ serve(async (req) => {
       const pageData = data?.page_data || data?.data || [];
       if (pageData.length === 0) break;
 
+      // Log first item's last_step/steps structure for debugging
+      if (page === 1 && pageData.length > 0) {
+        const sample = pageData[0]?.response_data || pageData[0];
+        if (sample?.last_step) {
+          console.log('[search-processes] last_step keys:', JSON.stringify(Object.keys(sample.last_step)));
+          console.log('[search-processes] last_step sample:', JSON.stringify(sample.last_step).slice(0, 500));
+        }
+        if (sample?.steps?.length > 0) {
+          console.log('[search-processes] steps[0] keys:', JSON.stringify(Object.keys(sample.steps[0])));
+          console.log('[search-processes] steps[0] sample:', JSON.stringify(sample.steps[0]).slice(0, 500));
+        }
+      }
+
       allPageData.push(...pageData);
 
       // Judit API uses page_count or all_pages_count for total pages
