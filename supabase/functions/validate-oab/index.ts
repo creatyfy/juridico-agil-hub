@@ -8,14 +8,6 @@ const corsHeaders = {
 const validUFs = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT',
   'PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
 
-const UF_NAMES: Record<string, string> = {
-  'AC':'Acre','AL':'Alagoas','AM':'Amazonas','AP':'Amapá','BA':'Bahia','CE':'Ceará',
-  'DF':'Distrito Federal','ES':'Espírito Santo','GO':'Goiás','MA':'Maranhão','MG':'Minas Gerais',
-  'MS':'Mato Grosso do Sul','MT':'Mato Grosso','PA':'Pará','PB':'Paraíba','PE':'Pernambuco',
-  'PI':'Piauí','PR':'Paraná','RJ':'Rio de Janeiro','RN':'Rio Grande do Norte','RO':'Rondônia',
-  'RR':'Roraima','RS':'Rio Grande do Sul','SC':'Santa Catarina','SE':'Sergipe','SP':'São Paulo','TO':'Tocantins'
-};
-
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -39,30 +31,26 @@ serve(async (req: Request) => {
     }
 
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
-    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Official CNA endpoint (authoritative)
-    const directResult = await tryDirectCNA(cleanOab, uf);
-    if (directResult) {
-      console.log(`Found via CNA official endpoint: ${directResult.nome}`);
+    // Strategy 1: Judit API — synchronous Hot Storage lookup by OAB
+    const juditResult = await tryJuditOab(cleanOab, uf);
+    if (juditResult) {
+      console.log(`Found via Judit API: ${juditResult.nome}`);
       return new Response(
-        JSON.stringify(directResult),
+        JSON.stringify(juditResult),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Strategy 2: strict fallback with exact OAB/UF pair to avoid wrong lawyer names
-    if (firecrawlKey) {
-      const fallbackResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
-      if (fallbackResult) {
-        console.log(`Found via strict fallback: ${fallbackResult.nome}`);
-        return new Response(
-          JSON.stringify(fallbackResult),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+    // Strategy 2: Official CNA endpoint (fallback)
+    const cnaResult = await tryDirectCNA(cleanOab, uf);
+    if (cnaResult) {
+      console.log(`Found via CNA official endpoint: ${cnaResult.nome}`);
+      return new Response(
+        JSON.stringify(cnaResult),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     console.log(`OAB ${cleanOab}/${uf} not found by any strategy`);
@@ -81,81 +69,312 @@ serve(async (req: Request) => {
 });
 
 /**
- * Strategy 2: Firecrawl fallback with strict OAB/UF matching + consensus by frequency
+ * Strategy 1: Judit Hot Storage — synchronous OAB lookup
+ * Returns lawsuit data with party info, from which we extract the lawyer name.
  */
-async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
+async function tryJuditOab(oab: string, uf: string) {
+  const apiKey = Deno.env.get('JUDIT_API_KEY');
+  if (!apiKey) {
+    console.log('JUDIT_API_KEY not configured, skipping Judit strategy');
+    return null;
+  }
+
   try {
-    const queries = [
-      `"${oab}/${uf}" advogado`,
-      `"OAB/${uf}" "${oab}" advogado`,
-      `"${oab}" "${uf}" "advogado"`,
-    ];
+    // Format: "15039/AM" — Judit expects OAB with UF suffix
+    const searchKey = `${oab}/${uf}`;
+    console.log(`Judit Hot Storage lookup: ${searchKey}`);
 
-    const candidateScores = new Map<string, number>();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-    for (const query of queries) {
-      console.log(`Firecrawl strict search: "${query}"`);
-
-      const response = await fetch('https://api.firecrawl.dev/v1/search', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+    const response = await fetch('https://lawsuits.production.judit.io/lawsuits', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify({
+        search: {
+          search_type: 'oab',
+          search_key: searchKey,
         },
-        body: JSON.stringify({
-          query,
-          limit: 10,
-          lang: 'pt-br',
-          country: 'br',
-        }),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    const text = await response.text();
+
+    if (!response.ok) {
+      console.error(`Judit Hot Storage error [${response.status}]: ${text.slice(0, 300)}`);
+      // If Hot Storage fails, try the async requests endpoint as fallback
+      return await tryJuditAsyncOab(oab, uf, apiKey);
+    }
+
+    const data = JSON.parse(text);
+    console.log(`Judit Hot Storage response keys: ${JSON.stringify(Object.keys(data))}`);
+
+    // Extract lawyer name from the response
+    const lawyerName = extractLawyerFromJudit(data, oab, uf);
+    if (lawyerName) {
+      return {
+        nome: lawyerName.toUpperCase(),
+        status: 'ativo' as const,
+        inscricao: oab,
+        uf,
+        fonte: 'judit',
+      };
+    }
+
+    console.log('Judit returned data but could not extract lawyer name');
+    return null;
+  } catch (error) {
+    console.error('Judit Hot Storage error:', (error as Error).message);
+    // Fallback to async endpoint
+    try {
+      return await tryJuditAsyncOab(oab, uf, Deno.env.get('JUDIT_API_KEY')!);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Judit async requests endpoint — creates a request and polls for result
+ */
+async function tryJuditAsyncOab(oab: string, uf: string, apiKey: string) {
+  try {
+    const searchKey = `${oab}/${uf}`;
+    console.log(`Judit async request: ${searchKey}`);
+
+    // Create request
+    const createResponse = await fetch('https://requests.prod.judit.io/requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify({
+        search: {
+          search_type: 'oab',
+          search_key: searchKey,
+          response_type: 'lawsuits',
+        },
+      }),
+    });
+
+    if (!createResponse.ok) {
+      const errText = await createResponse.text();
+      console.error(`Judit create request failed [${createResponse.status}]: ${errText.slice(0, 300)}`);
+      return null;
+    }
+
+    const createData = await createResponse.json();
+    const requestId = createData?.request_id;
+    if (!requestId) {
+      console.error('Judit returned no request_id');
+      return null;
+    }
+
+    console.log(`Judit request created: ${requestId}, polling...`);
+
+    // Poll for completion (max 12 seconds, every 2 seconds)
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const statusResponse = await fetch(`https://requests.prod.judit.io/requests/${requestId}`, {
+        headers: { 'api-key': apiKey },
       });
 
-      if (!response.ok) {
-        console.error(`Firecrawl search failed: ${response.status}`);
+      if (!statusResponse.ok) {
+        await statusResponse.text();
         continue;
       }
 
-      const data = await response.json();
-      const results = data?.data || data?.results || [];
-      console.log(`Firecrawl strict search returned ${results.length} results`);
+      const statusData = await statusResponse.json();
+      console.log(`Judit request ${requestId} status: ${statusData?.status}`);
 
-      for (const result of results) {
-        const text = [
-          result.title || '',
-          result.description || '',
-          result.markdown || '',
-          result.content || '',
-        ].join('\n');
+      if (statusData?.status === 'done' || statusData?.status === 'completed') {
+        // Fetch results
+        const resultsResponse = await fetch(
+          `https://requests.prod.judit.io/responses?request_id=${requestId}&page=1&page_size=5`,
+          { headers: { 'api-key': apiKey } }
+        );
 
-        if (!containsExactOabUf(text, oab, uf)) continue;
+        if (!resultsResponse.ok) {
+          await resultsResponse.text();
+          return null;
+        }
 
-        const name = extractLawyerName(text, oab, uf);
-        if (!name) continue;
+        const resultsData = await resultsResponse.json();
+        const lawyerName = extractLawyerFromJuditResults(resultsData, oab, uf);
+        if (lawyerName) {
+          return {
+            nome: lawyerName.toUpperCase(),
+            status: 'ativo' as const,
+            inscricao: oab,
+            uf,
+            fonte: 'judit',
+          };
+        }
+        return null;
+      }
 
-        const normalizedName = name.toUpperCase().replace(/\s+/g, ' ').trim();
-        const previous = candidateScores.get(normalizedName) ?? 0;
-        candidateScores.set(normalizedName, previous + 1);
+      if (statusData?.status === 'error' || statusData?.status === 'failed') {
+        console.error(`Judit request failed: ${statusData?.status}`);
+        return null;
       }
     }
 
-    if (candidateScores.size === 0) return null;
-
-    const [bestName] = [...candidateScores.entries()].sort((a, b) => b[1] - a[1])[0];
-
-    return {
-      nome: bestName,
-      status: 'ativo' as const,
-      inscricao: oab,
-      uf,
-    };
+    console.log('Judit polling timeout');
+    return null;
   } catch (error) {
-    console.error('Firecrawl strict search error:', error);
+    console.error('Judit async error:', (error as Error).message);
     return null;
   }
 }
 
 /**
- * Strategy 1: Official CNA endpoint flow (GET form + POST search)
+ * Extract lawyer name from Judit Hot Storage response.
+ * The response contains lawsuit data with parties — find the lawyer matching the OAB.
+ */
+function extractLawyerFromJudit(data: Record<string, unknown>, oab: string, uf: string): string | null {
+  try {
+    // Hot Storage can return different structures
+    // Check for direct lawyer info
+    if (data.name && typeof data.name === 'string') {
+      return data.name;
+    }
+
+    // Check lawsuits array
+    const lawsuits = (data.lawsuits || data.data || data.page_data || []) as Record<string, unknown>[];
+    if (!Array.isArray(lawsuits) || lawsuits.length === 0) {
+      // Maybe data itself is a lawsuit
+      const name = extractNameFromLawsuit(data, oab, uf);
+      if (name) return name;
+      return null;
+    }
+
+    // Search across lawsuits for the lawyer name
+    const candidateNames = new Map<string, number>();
+
+    for (const lawsuit of lawsuits.slice(0, 20)) {
+      const responseData = (lawsuit as Record<string, unknown>).response_data as Record<string, unknown> || lawsuit;
+      const name = extractNameFromLawsuit(responseData, oab, uf);
+      if (name) {
+        const normalized = name.toUpperCase().replace(/\s+/g, ' ').trim();
+        candidateNames.set(normalized, (candidateNames.get(normalized) || 0) + 1);
+      }
+    }
+
+    if (candidateNames.size > 0) {
+      // Return most frequent name
+      const sorted = [...candidateNames.entries()].sort((a, b) => b[1] - a[1]);
+      console.log(`Judit candidates: ${JSON.stringify(sorted.slice(0, 3))}`);
+      return sorted[0][0];
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error extracting lawyer from Judit:', (error as Error).message);
+    return null;
+  }
+}
+
+/**
+ * Extract lawyer name from a single Judit lawsuit object
+ */
+function extractNameFromLawsuit(lawsuit: Record<string, unknown>, oab: string, uf: string): string | null {
+  // Check parties/lawyers arrays
+  const parties = (lawsuit.parties || lawsuit.partes || []) as Record<string, unknown>[];
+  const lawyers = (lawsuit.lawyers || lawsuit.advogados || []) as Record<string, unknown>[];
+
+  // Search in lawyers array first
+  for (const lawyer of lawyers) {
+    const lawyerOab = String(lawyer.oab || lawyer.inscription || lawyer.inscricao || '').replace(/\D/g, '');
+    const lawyerUf = String(lawyer.uf || lawyer.state || '').toUpperCase();
+    const lawyerName = String(lawyer.name || lawyer.nome || '');
+
+    if (lawyerOab === oab && (lawyerUf === uf || !lawyerUf) && lawyerName.length >= 5) {
+      return lawyerName;
+    }
+  }
+
+  // Search in parties for lawyer sub-entries
+  for (const party of parties) {
+    const partyLawyers = (party.lawyers || party.advogados || party.attorneys || []) as Record<string, unknown>[];
+    for (const lawyer of partyLawyers) {
+      const lawyerOab = String(lawyer.oab || lawyer.inscription || lawyer.inscricao || '').replace(/\D/g, '');
+      const lawyerUf = String(lawyer.uf || lawyer.state || '').toUpperCase();
+      const lawyerName = String(lawyer.name || lawyer.nome || '');
+
+      if (lawyerOab === oab && (lawyerUf === uf || !lawyerUf) && lawyerName.length >= 5) {
+        return lawyerName;
+      }
+    }
+  }
+
+  // Check last_step or steps for party data
+  const lastStep = lawsuit.last_step as Record<string, unknown> | undefined;
+  if (lastStep) {
+    const stepParties = (lastStep.parties || lastStep.partes || []) as Record<string, unknown>[];
+    for (const party of stepParties) {
+      const partyLawyers = (party.lawyers || party.advogados || party.attorneys || []) as Record<string, unknown>[];
+      for (const lawyer of partyLawyers) {
+        const lawyerOab = String(lawyer.oab || lawyer.inscription || lawyer.inscricao || '').replace(/\D/g, '');
+        const lawyerUf = String(lawyer.uf || lawyer.state || '').toUpperCase();
+        const lawyerName = String(lawyer.name || lawyer.nome || '');
+
+        if (lawyerOab === oab && (lawyerUf === uf || !lawyerUf) && lawyerName.length >= 5) {
+          return lawyerName;
+        }
+      }
+    }
+  }
+
+  // Deep search in stringified data for OAB pattern
+  const jsonStr = JSON.stringify(lawsuit);
+  const oabPattern = new RegExp(`"(?:oab|inscription|inscricao)"\\s*:\\s*"?${oab}"?`, 'i');
+  if (oabPattern.test(jsonStr)) {
+    // OAB is present, try to find the name near it
+    const nameMatch = jsonStr.match(new RegExp(`"(?:name|nome)"\\s*:\\s*"([^"]{5,100})"[^}]{0,200}"(?:oab|inscription|inscricao)"\\s*:\\s*"?${oab}"?`, 'i'))
+      || jsonStr.match(new RegExp(`"(?:oab|inscription|inscricao)"\\s*:\\s*"?${oab}"?[^}]{0,200}"(?:name|nome)"\\s*:\\s*"([^"]{5,100})"`, 'i'));
+    if (nameMatch?.[1]) {
+      return nameMatch[1];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract lawyer name from Judit async results (paginated responses)
+ */
+function extractLawyerFromJuditResults(data: Record<string, unknown>, oab: string, uf: string): string | null {
+  const pageData = (data.page_data || data.data || []) as Record<string, unknown>[];
+  if (!Array.isArray(pageData) || pageData.length === 0) return null;
+
+  const candidateNames = new Map<string, number>();
+
+  for (const item of pageData.slice(0, 20)) {
+    const responseData = item.response_data as Record<string, unknown> || item;
+    const name = extractNameFromLawsuit(responseData, oab, uf);
+    if (name) {
+      const normalized = name.toUpperCase().replace(/\s+/g, ' ').trim();
+      candidateNames.set(normalized, (candidateNames.get(normalized) || 0) + 1);
+    }
+  }
+
+  if (candidateNames.size > 0) {
+    const sorted = [...candidateNames.entries()].sort((a, b) => b[1] - a[1]);
+    return sorted[0][0];
+  }
+
+  return null;
+}
+
+/**
+ * Strategy 2: Official CNA endpoint flow (GET form + POST search)
  */
 async function tryDirectCNA(oab: string, uf: string) {
   try {
@@ -211,15 +430,6 @@ async function tryDirectCNA(oab: string, uf: string) {
     if (searchResponse.ok) {
       const parsed = parseCNAJson(text, oab, uf);
       if (parsed) return parsed;
-
-      try {
-        const cnaResponse = JSON.parse(text);
-        if (cnaResponse?.Message) {
-          console.log(`CNA message: ${cnaResponse.Message}`);
-        }
-      } catch {
-        // ignore
-      }
     }
 
     console.log(`CNA response status: ${searchResponse.status}`);
@@ -227,81 +437,6 @@ async function tryDirectCNA(oab: string, uf: string) {
     console.error('Direct CNA error:', (error as Error).message);
   }
   return null;
-}
-
-function normalizeTextForMatch(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase();
-}
-
-function containsExactOabUf(text: string, oab: string, uf: string) {
-  const normalizedText = normalizeTextForMatch(text);
-  const cleanOab = oab.replace(/\D/g, '');
-  const cleanUf = uf.toUpperCase();
-
-  const patterns = [
-    new RegExp(`\\b${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${cleanOab}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bINSCRICAO\\s*[:\\-]?\\s*${cleanOab}[\\s\\S]{0,60}\\bUF\\s*[:\\-]?\\s*${cleanUf}\\b`, 'i'),
-  ];
-
-  return patterns.some((pattern) => pattern.test(normalizedText));
-}
-
-/**
- * Extract lawyer name strictly associated with the exact OAB/UF pair
- */
-function extractLawyerName(text: string, oab: string, uf: string): string | null {
-  if (!text) return null;
-
-  const cleanUf = uf.toUpperCase();
-  const cleanOab = oab.replace(/\D/g, '');
-
-  const primaryPatterns = [
-    // "NOME COMPLETO (12345/AM)"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "NOME COMPLETO (OAB: 12345/AM)"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*OAB\\s*[:\\-]?\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "ADVOGADO: NOME COMPLETO (12345/AM)"
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "NOME COMPLETO(OAB: 12345/AM)" without space before paren
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\(OAB:\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\)`, 'i'),
-    // "ADVOGADO NOME COMPLETO OAB/AM 12345" or "ADVOGADO NOME COMPLETO OAB: 12345/AM"
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*OAB\\s*[/:\\-]?\\s*${cleanUf}?\\s*[:\\-]?\\s*${cleanOab}`, 'i'),
-    // "NOME COMPLETO - OAB/AM 12345"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*[-–]\\s*OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}`, 'i'),
-    // "OAB/AM nº 12345 ... NOME" (reversed)
-    new RegExp(`OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}[^\\n]{0,30}([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})`, 'i'),
-    // CNA JSON-like: "Nome": "VALUE"  
-    new RegExp(`NOME\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})[^\\n]{0,120}INSCRI[ÇC][ÃA]O\\s*[:\\-]?\\s*${cleanOab}[^\\n]{0,80}UF\\s*[:\\-]?\\s*${cleanUf}`, 'i'),
-    // JSON: "Nome": "VALUE"
-    /"Nome"\s*:\s*"([^"]{5,100})"/i,
-  ];
-
-  for (const pattern of primaryPatterns) {
-    const match = text.match(pattern);
-    if (!match?.[1]) continue;
-
-    const cleaned = sanitizeCandidateName(match[1]);
-    if (cleaned) return cleaned;
-  }
-
-  return null;
-}
-
-function sanitizeCandidateName(candidate: string): string | null {
-  const cleaned = candidate
-    .replace(/\s+/g, ' ')
-    .replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?|SRA?\.?|SR\.?)+\s+/i, '')
-    .replace(/\s+(OAB|ADVOGAD[OA]|INSCRI[ÇC][ÃA]O|SECCIONAL|CONSELHO).*$/i, '')
-    .trim();
-
-  if (cleaned.length < 5) return null;
-  if (cleaned.split(/\s+/).length < 2) return null;
-  return cleaned;
 }
 
 function parseCNAJson(text: string, oab: string, uf: string) {
@@ -316,23 +451,11 @@ function parseCNAJson(text: string, oab: string, uf: string) {
         inscricao: lawyer.Inscricao || oab,
         uf: lawyer.UF || uf,
         tipo: lawyer.TipoInscOab || null,
+        fonte: 'cna',
       };
     }
   } catch {
     // Not valid JSON
-  }
-  return null;
-}
-
-function extractFromMarkdown(text: string, oab: string, uf: string) {
-  const name = extractLawyerName(text, oab, uf);
-  if (name) {
-    return {
-      nome: name.toUpperCase(),
-      status: 'ativo' as const,
-      inscricao: oab,
-      uf,
-    };
   }
   return null;
 }
