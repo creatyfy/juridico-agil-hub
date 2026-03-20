@@ -43,19 +43,7 @@ serve(async (req: Request) => {
 
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Firecrawl search (web search for lawyer info)
-    if (firecrawlKey) {
-      const searchResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
-      if (searchResult) {
-        console.log(`Found via Firecrawl search: ${searchResult.nome}`);
-        return new Response(
-          JSON.stringify(searchResult),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // Strategy 2: Direct CNA API (may be blocked)
+    // Strategy 1: Direct CNA API (authoritative source)
     const directResult = await tryDirectCNA(cleanOab, uf);
     if (directResult) {
       console.log(`Found via direct CNA: ${directResult.nome}`);
@@ -65,7 +53,7 @@ serve(async (req: Request) => {
       );
     }
 
-    // Strategy 3: Firecrawl scrape of CNA page
+    // Strategy 2: Firecrawl scrape of CNA page (authoritative fallback)
     if (firecrawlKey) {
       const scrapeResult = await scrapeCnaViaFirecrawl(cleanOab, uf, firecrawlKey);
       if (scrapeResult) {
