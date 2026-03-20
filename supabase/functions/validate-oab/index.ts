@@ -39,10 +39,11 @@ serve(async (req: Request) => {
     }
 
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
+    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
 
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Official-only validation: never use generic web search to avoid wrong lawyer mapping.
+    // Strategy 1: Official CNA endpoint (authoritative)
     const directResult = await tryDirectCNA(cleanOab, uf);
     if (directResult) {
       console.log(`Found via CNA official endpoint: ${directResult.nome}`);
@@ -50,6 +51,18 @@ serve(async (req: Request) => {
         JSON.stringify(directResult),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Strategy 2: strict fallback with exact OAB/UF pair to avoid wrong lawyer names
+    if (firecrawlKey) {
+      const fallbackResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
+      if (fallbackResult) {
+        console.log(`Found via strict fallback: ${fallbackResult.nome}`);
+        return new Response(
+          JSON.stringify(fallbackResult),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     console.log(`OAB ${cleanOab}/${uf} not found by any strategy`);
@@ -68,15 +81,17 @@ serve(async (req: Request) => {
 });
 
 /**
- * Strategy 2: Firecrawl search with strict OAB/UF matching to avoid false positives
+ * Strategy 2: Firecrawl fallback with strict OAB/UF matching + consensus by frequency
  */
 async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
   try {
     const queries = [
       `"${oab}/${uf}" advogado`,
       `"OAB/${uf}" "${oab}" advogado`,
-      `"${oab}" "${uf}" "OAB" advogado`,
+      `"${oab}" "${uf}" "advogado"`,
     ];
+
+    const candidateScores = new Map<string, number>();
 
     for (const query of queries) {
       console.log(`Firecrawl strict search: "${query}"`);
@@ -112,23 +127,27 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
           result.content || '',
         ].join('\n');
 
-        if (!containsExactOabUf(text, oab, uf)) {
-          continue;
-        }
+        if (!containsExactOabUf(text, oab, uf)) continue;
 
         const name = extractLawyerName(text, oab, uf);
-        if (name) {
-          return {
-            nome: name.toUpperCase(),
-            status: 'ativo' as const,
-            inscricao: oab,
-            uf,
-          };
-        }
+        if (!name) continue;
+
+        const normalizedName = name.toUpperCase().replace(/\s+/g, ' ').trim();
+        const previous = candidateScores.get(normalizedName) ?? 0;
+        candidateScores.set(normalizedName, previous + 1);
       }
     }
 
-    return null;
+    if (candidateScores.size === 0) return null;
+
+    const [bestName] = [...candidateScores.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    return {
+      nome: bestName,
+      status: 'ativo' as const,
+      inscricao: oab,
+      uf,
+    };
   } catch (error) {
     console.error('Firecrawl strict search error:', error);
     return null;
@@ -232,7 +251,7 @@ function containsExactOabUf(text: string, oab: string, uf: string) {
 }
 
 /**
- * Extract lawyer name from text using patterns tied to the exact UF/OAB pair
+ * Extract lawyer name strictly associated with the exact OAB/UF pair
  */
 function extractLawyerName(text: string, oab: string, uf: string): string | null {
   if (!text) return null;
@@ -240,31 +259,34 @@ function extractLawyerName(text: string, oab: string, uf: string): string | null
   const cleanUf = uf.toUpperCase();
   const cleanOab = oab.replace(/\D/g, '');
 
-  const patterns = [
-    /Nome[:\s]+([A-ZÀ-ÖØ-Ýa-zà-öø-ý\s]{5,100})/i,
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})\\s*[-–(]\\s*OAB\\s*[/\\s]*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}`, 'i'),
-    new RegExp(`OAB\\s*[/\\s]*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}\\s*[-–)]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})`, 'i'),
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})[^\\n]{0,80}\\(${cleanOab}\\s*/\\s*${cleanUf}\\)`, 'i'),
-    /"Nome"\s*:\s*"([^"]{5,100})"/i,
+  const primaryPatterns = [
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*OAB\\s*[:\\-]?\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    new RegExp(`NOME\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})[^\\n]{0,120}INSCRI[ÇC][ÃA]O\\s*[:\\-]?\\s*${cleanOab}[^\\n]{0,80}UF\\s*[:\\-]?\\s*${cleanUf}`, 'i'),
   ];
 
-  for (const pattern of patterns) {
+  for (const pattern of primaryPatterns) {
     const match = text.match(pattern);
     if (!match?.[1]) continue;
 
-    const candidate = match[1].trim().replace(/\s+/g, ' ');
-    if (candidate.length < 5 || candidate.split(/\s+/).length < 2) continue;
-
-    const cleaned = candidate
-      .replace(/\s+(OAB|Advogad[oa]|Inscri[çc][ãa]o|Seccional|Conselho).*$/i, '')
-      .trim();
-
-    if (cleaned.split(/\s+/).length >= 2) {
-      return cleaned;
-    }
+    const cleaned = sanitizeCandidateName(match[1]);
+    if (cleaned) return cleaned;
   }
 
   return null;
+}
+
+function sanitizeCandidateName(candidate: string): string | null {
+  const cleaned = candidate
+    .replace(/\s+/g, ' ')
+    .replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?|SRA?\.?|SR\.?)+\s+/i, '')
+    .replace(/\s+(OAB|ADVOGAD[OA]|INSCRI[ÇC][ÃA]O|SECCIONAL|CONSELHO).*$/i, '')
+    .trim();
+
+  if (cleaned.length < 5) return null;
+  if (cleaned.split(/\s+/).length < 2) return null;
+  return cleaned;
 }
 
 function parseCNAJson(text: string, oab: string, uf: string) {
