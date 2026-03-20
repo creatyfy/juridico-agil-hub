@@ -81,15 +81,17 @@ serve(async (req: Request) => {
 });
 
 /**
- * Strategy 2: Firecrawl search with strict OAB/UF matching to avoid false positives
+ * Strategy 2: Firecrawl fallback with strict OAB/UF matching + consensus by frequency
  */
 async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
   try {
     const queries = [
       `"${oab}/${uf}" advogado`,
       `"OAB/${uf}" "${oab}" advogado`,
-      `"${oab}" "${uf}" "OAB" advogado`,
+      `"${oab}" "${uf}" "advogado"`,
     ];
+
+    const candidateScores = new Map<string, number>();
 
     for (const query of queries) {
       console.log(`Firecrawl strict search: "${query}"`);
@@ -125,23 +127,27 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
           result.content || '',
         ].join('\n');
 
-        if (!containsExactOabUf(text, oab, uf)) {
-          continue;
-        }
+        if (!containsExactOabUf(text, oab, uf)) continue;
 
         const name = extractLawyerName(text, oab, uf);
-        if (name) {
-          return {
-            nome: name.toUpperCase(),
-            status: 'ativo' as const,
-            inscricao: oab,
-            uf,
-          };
-        }
+        if (!name) continue;
+
+        const normalizedName = name.toUpperCase().replace(/\s+/g, ' ').trim();
+        const previous = candidateScores.get(normalizedName) ?? 0;
+        candidateScores.set(normalizedName, previous + 1);
       }
     }
 
-    return null;
+    if (candidateScores.size === 0) return null;
+
+    const [bestName] = [...candidateScores.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    return {
+      nome: bestName,
+      status: 'ativo' as const,
+      inscricao: oab,
+      uf,
+    };
   } catch (error) {
     console.error('Firecrawl strict search error:', error);
     return null;
