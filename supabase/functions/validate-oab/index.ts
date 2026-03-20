@@ -243,7 +243,8 @@ function containsExactOabUf(text: string, oab: string, uf: string) {
 
   const patterns = [
     new RegExp(`\\b${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*/?\\s*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${cleanOab}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
     new RegExp(`\\bINSCRICAO\\s*[:\\-]?\\s*${cleanOab}[\\s\\S]{0,60}\\bUF\\s*[:\\-]?\\s*${cleanUf}\\b`, 'i'),
   ];
 
