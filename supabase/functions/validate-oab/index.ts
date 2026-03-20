@@ -43,23 +43,23 @@ serve(async (req: Request) => {
 
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Direct CNA API (authoritative source)
+    // Strategy 1: Official CNA endpoint (form POST)
     const directResult = await tryDirectCNA(cleanOab, uf);
     if (directResult) {
-      console.log(`Found via direct CNA: ${directResult.nome}`);
+      console.log(`Found via CNA official endpoint: ${directResult.nome}`);
       return new Response(
         JSON.stringify(directResult),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Strategy 2: Firecrawl scrape of CNA page (authoritative fallback)
+    // Strategy 2: Strict Firecrawl search (must match exact OAB/UF pair)
     if (firecrawlKey) {
-      const scrapeResult = await scrapeCnaViaFirecrawl(cleanOab, uf, firecrawlKey);
-      if (scrapeResult) {
-        console.log(`Found via Firecrawl scrape: ${scrapeResult.nome}`);
+      const searchResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
+      if (searchResult) {
+        console.log(`Found via strict Firecrawl search: ${searchResult.nome}`);
         return new Response(
-          JSON.stringify(scrapeResult),
+          JSON.stringify(searchResult),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -81,18 +81,18 @@ serve(async (req: Request) => {
 });
 
 /**
- * Strategy 1: Use Firecrawl web search to find lawyer info
+ * Strategy 2: Firecrawl search with strict OAB/UF matching to avoid false positives
  */
 async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
   try {
-    // Try multiple search queries
     const queries = [
-      `"OAB" "${oab}" "${uf}" advogado nome`,
-      `OAB ${uf} ${oab} advogado`,
+      `"${oab}/${uf}" advogado`,
+      `"OAB/${uf}" "${oab}" advogado`,
+      `"${oab}" "${uf}" "OAB" advogado`,
     ];
 
     for (const query of queries) {
-      console.log(`Firecrawl search: "${query}"`);
+      console.log(`Firecrawl strict search: "${query}"`);
 
       const response = await fetch('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
@@ -102,7 +102,7 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
         },
         body: JSON.stringify({
           query,
-          limit: 5,
+          limit: 10,
           lang: 'pt-br',
           country: 'br',
         }),
@@ -115,7 +115,7 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
 
       const data = await response.json();
       const results = data?.data || data?.results || [];
-      console.log(`Firecrawl search returned ${results.length} results`);
+      console.log(`Firecrawl strict search returned ${results.length} results`);
 
       for (const result of results) {
         const text = [
@@ -125,8 +125,9 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
           result.content || '',
         ].join('\n');
 
-        // Log first 300 chars of each result for debugging
-        console.log(`Result [${result.url || 'no-url'}]: ${text.substring(0, 300).replace(/\n/g, ' ')}`);
+        if (!containsExactOabUf(text, oab, uf)) {
+          continue;
+        }
 
         const name = extractLawyerName(text, oab, uf);
         if (name) {
@@ -142,123 +143,137 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
 
     return null;
   } catch (error) {
-    console.error('Firecrawl search error:', error);
+    console.error('Firecrawl strict search error:', error);
     return null;
   }
 }
 
 /**
- * Strategy 2: Direct CNA API call
+ * Strategy 1: Official CNA endpoint flow (GET form + POST search)
  */
 async function tryDirectCNA(oab: string, uf: string) {
   try {
-    const searchUrl = `https://cna.oab.org.br/Home/Search?NomeAdvo=&Insc=${oab}&Uf=${uf}`;
-    console.log(`Trying direct CNA: ${searchUrl}`);
+    const baseUrl = 'https://cna.oab.org.br/';
+    const searchUrl = 'https://cna.oab.org.br/Home/Search';
+    console.log(`Trying CNA official flow: ${searchUrl}`);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 12000);
 
-    const directResponse = await fetch(searchUrl, {
+    const pageResponse = await fetch(baseUrl, {
       method: 'GET',
       headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: controller.signal,
+    });
+
+    const pageHtml = await pageResponse.text();
+    const tokenMatch = pageHtml.match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/i);
+    const verificationToken = tokenMatch?.[1] ?? '';
+
+    if (!verificationToken) {
+      clearTimeout(timeout);
+      console.log('CNA token not found, skipping direct flow');
+      return null;
+    }
+
+    const formData = new URLSearchParams({
+      __RequestVerificationToken: verificationToken,
+      NomeAdvo: '',
+      Insc: oab,
+      Uf: uf,
+      TipoInsc: '',
+    });
+
+    const searchResponse = await fetch(searchUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
         'Accept': 'application/json, text/plain, */*',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://cna.oab.org.br/',
-        'Origin': 'https://cna.oab.org.br',
       },
+      body: formData.toString(),
       signal: controller.signal,
     });
 
     clearTimeout(timeout);
 
-    if (directResponse.ok) {
-      const text = await directResponse.text();
-      console.log(`CNA response: status=${directResponse.status}, len=${text.length}`);
-      return parseCNAJson(text, oab, uf);
+    const text = await searchResponse.text();
+    if (searchResponse.ok) {
+      const parsed = parseCNAJson(text, oab, uf);
+      if (parsed) return parsed;
+
+      try {
+        const cnaResponse = JSON.parse(text);
+        if (cnaResponse?.Message) {
+          console.log(`CNA message: ${cnaResponse.Message}`);
+        }
+      } catch {
+        // ignore
+      }
     }
 
-    console.log(`CNA response status: ${directResponse.status}`);
+    console.log(`CNA response status: ${searchResponse.status}`);
   } catch (error) {
     console.error('Direct CNA error:', (error as Error).message);
   }
   return null;
 }
 
-/**
- * Strategy 3: Firecrawl scrape of CNA search page
- */
-async function scrapeCnaViaFirecrawl(oab: string, uf: string, apiKey: string) {
-  try {
-    const url = `https://cna.oab.org.br/Home/Search?NomeAdvo=&Insc=${oab}&Uf=${uf}`;
-    console.log(`Firecrawl scrape: ${url}`);
+function normalizeTextForMatch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+}
 
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url,
-        formats: ['markdown'],
-        onlyMainContent: false,
-        waitFor: 5000,
-      }),
-    });
+function containsExactOabUf(text: string, oab: string, uf: string) {
+  const normalizedText = normalizeTextForMatch(text);
+  const cleanOab = oab.replace(/\D/g, '');
+  const cleanUf = uf.toUpperCase();
 
-    const data = await response.json();
-    const markdown = data?.data?.markdown || data?.markdown || '';
-    console.log(`Firecrawl scrape response: status=${response.status}, len=${markdown.length}`);
+  const patterns = [
+    new RegExp(`\\b${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*/?\\s*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}\\b`, 'i'),
+    new RegExp(`\\bINSCRICAO\\s*[:\\-]?\\s*${cleanOab}[\\s\\S]{0,60}\\bUF\\s*[:\\-]?\\s*${cleanUf}\\b`, 'i'),
+  ];
 
-    if (!markdown || markdown.length < 10) return null;
-
-    // Try JSON extraction from markdown
-    const jsonMatch = markdown.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      const parsed = parseCNAJson(jsonMatch[1].trim(), oab, uf);
-      if (parsed) return parsed;
-    }
-
-    // Try text extraction
-    return extractFromMarkdown(markdown, oab, uf);
-  } catch (error) {
-    console.error('Firecrawl scrape error:', error);
-  }
-  return null;
+  return patterns.some((pattern) => pattern.test(normalizedText));
 }
 
 /**
- * Extract lawyer name from text using multiple patterns
+ * Extract lawyer name from text using patterns tied to the exact UF/OAB pair
  */
-function extractLawyerName(text: string, oab: string, _uf: string): string | null {
+function extractLawyerName(text: string, oab: string, uf: string): string | null {
   if (!text) return null;
 
-  // Pattern: Name near OAB number reference
+  const cleanUf = uf.toUpperCase();
+  const cleanOab = oab.replace(/\D/g, '');
+
   const patterns = [
-    // "Nome: FULL NAME"
     /Nome[:\s]+([A-ZÀ-ÖØ-Ýa-zà-öø-ý\s]{5,100})/i,
-    // "FULL NAME - OAB/UF 12345" or "FULL NAME (OAB 12345)"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý\\s]{4,80})\\s*[-–(]\\s*OAB[/\\s]*\\w{2}[\\s:]*${oab}`, 'i'),
-    // "OAB/UF 12345 - FULL NAME"
-    new RegExp(`OAB[/\\s]*\\w{2}[\\s:]*${oab}\\s*[-–)]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý\\s]{4,80})`, 'i'),
-    // JSON-like: "Nome": "VALUE"
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})\\s*[-–(]\\s*OAB\\s*[/\\s]*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}`, 'i'),
+    new RegExp(`OAB\\s*[/\\s]*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}\\s*[-–)]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})`, 'i'),
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,80})[^\\n]{0,80}\\(${cleanOab}\\s*/\\s*${cleanUf}\\)`, 'i'),
     /"Nome"\s*:\s*"([^"]{5,100})"/i,
-    // "Dr./Dra. FULL NAME"
-    /(?:Dr\.?a?|Adv\.?)\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\s]{4,80})/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match && match[1]) {
-      const candidate = match[1].trim().replace(/\s+/g, ' ');
-      // Must have at least 2 words (first + last name)
-      if (candidate.length >= 5 && candidate.split(/\s+/).length >= 2) {
-        // Clean trailing common words
-        const cleaned = candidate.replace(/\s+(OAB|Advogad[oa]|Inscri[çc][ãa]o|Seccional|Conselho).*$/i, '').trim();
-        if (cleaned.split(/\s+/).length >= 2) {
-          return cleaned;
-        }
-      }
+    if (!match?.[1]) continue;
+
+    const candidate = match[1].trim().replace(/\s+/g, ' ');
+    if (candidate.length < 5 || candidate.split(/\s+/).length < 2) continue;
+
+    const cleaned = candidate
+      .replace(/\s+(OAB|Advogad[oa]|Inscri[çc][ãa]o|Seccional|Conselho).*$/i, '')
+      .trim();
+
+    if (cleaned.split(/\s+/).length >= 2) {
+      return cleaned;
     }
   }
 
