@@ -39,10 +39,11 @@ serve(async (req: Request) => {
     }
 
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
+    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
 
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Official-only validation: never use generic web search to avoid wrong lawyer mapping.
+    // Strategy 1: Official CNA endpoint (authoritative)
     const directResult = await tryDirectCNA(cleanOab, uf);
     if (directResult) {
       console.log(`Found via CNA official endpoint: ${directResult.nome}`);
@@ -50,6 +51,18 @@ serve(async (req: Request) => {
         JSON.stringify(directResult),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Strategy 2: strict fallback with exact OAB/UF pair to avoid wrong lawyer names
+    if (firecrawlKey) {
+      const fallbackResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
+      if (fallbackResult) {
+        console.log(`Found via strict fallback: ${fallbackResult.nome}`);
+        return new Response(
+          JSON.stringify(fallbackResult),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     console.log(`OAB ${cleanOab}/${uf} not found by any strategy`);
