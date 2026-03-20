@@ -16,6 +16,7 @@ const UF_OPTIONS = [
 ];
 
 type OabStatus = 'idle' | 'loading' | 'ativo' | 'inativo' | 'nao_encontrado';
+type ManualMode = 'off' | 'on';
 
 interface FormData {
   uf: string;
@@ -79,6 +80,7 @@ const steps = [
 export default function CadastroAdvogado() {
   const [currentStep, setCurrentStep] = useState(1);
   const [oabStatus, setOabStatus] = useState<OabStatus>('idle');
+  const [manualMode, setManualMode] = useState<ManualMode>('off');
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -434,13 +436,56 @@ export default function CadastroAdvogado() {
                 )}
 
                 {oabStatus === 'nao_encontrado' && (
-                  <Alert variant="destructive">
-                    <XCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      <p className="font-semibold">OAB não encontrada</p>
-                      <p className="text-xs mt-0.5">Verifique o número da OAB e o estado informados e tente novamente.</p>
-                    </AlertDescription>
-                  </Alert>
+                  <>
+                    <Alert variant="destructive">
+                      <XCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        <p className="font-semibold">OAB não encontrada automaticamente</p>
+                        <p className="text-xs mt-0.5">Não foi possível validar automaticamente. Você pode informar seu nome manualmente para continuar.</p>
+                      </AlertDescription>
+                    </Alert>
+
+                    {manualMode === 'off' && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setManualMode('on')}
+                        className="w-full h-11"
+                      >
+                        Informar nome manualmente
+                      </Button>
+                    )}
+
+                    {manualMode === 'on' && (
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="mb-1.5 block">Nome Completo *</Label>
+                          <Input
+                            placeholder="Seu nome completo como consta na OAB"
+                            value={form.nomeCompleto}
+                            onChange={(e) => updateField('nomeCompleto', e.target.value)}
+                            className={cn(errors.nomeCompleto && 'border-destructive')}
+                          />
+                          {errors.nomeCompleto && <p className="text-xs text-destructive mt-1">{errors.nomeCompleto}</p>}
+                        </div>
+
+                        <Button
+                          onClick={() => {
+                            if (form.nomeCompleto.trim().split(/\s+/).length < 2) {
+                              setErrors(prev => ({ ...prev, nomeCompleto: 'Informe nome e sobrenome' }));
+                              return;
+                            }
+                            setForm(prev => ({ ...prev, nomeCompleto: prev.nomeCompleto.toUpperCase().trim() }));
+                            setOabStatus('ativo');
+                          }}
+                          className="btn-accent w-full h-11 font-semibold"
+                          disabled={!form.nomeCompleto.trim()}
+                        >
+                          Continuar com este nome
+                          <ChevronRight className="h-4 w-4 ml-1" />
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {oabStatus === 'ativo' && (
@@ -474,8 +519,13 @@ export default function CadastroAdvogado() {
                       readOnly
                       className="bg-muted cursor-not-allowed pr-20"
                     />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 badge-status bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] text-[10px]">
-                      Via OAB
+                    <span className={cn(
+                      "absolute right-2 top-1/2 -translate-y-1/2 badge-status text-[10px]",
+                      manualMode === 'on'
+                        ? "bg-amber-500/10 text-amber-600"
+                        : "bg-[hsl(var(--success))]/10 text-[hsl(var(--success))]"
+                    )}>
+                      {manualMode === 'on' ? 'Manual' : 'Via OAB'}
                     </span>
                   </div>
                 </div>
