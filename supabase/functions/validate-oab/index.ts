@@ -243,7 +243,8 @@ function containsExactOabUf(text: string, oab: string, uf: string) {
 
   const patterns = [
     new RegExp(`\\b${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*/?\\s*${cleanUf}\\s*[:\\-]?\\s*${cleanOab}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${cleanOab}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
     new RegExp(`\\bINSCRICAO\\s*[:\\-]?\\s*${cleanOab}[\\s\\S]{0,60}\\bUF\\s*[:\\-]?\\s*${cleanUf}\\b`, 'i'),
   ];
 
@@ -260,10 +261,24 @@ function extractLawyerName(text: string, oab: string, uf: string): string | null
   const cleanOab = oab.replace(/\D/g, '');
 
   const primaryPatterns = [
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*OAB\\s*[:\\-]?\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    new RegExp(`NOME\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\s]{4,90})[^\\n]{0,120}INSCRI[ÇC][ÃA]O\\s*[:\\-]?\\s*${cleanOab}[^\\n]{0,80}UF\\s*[:\\-]?\\s*${cleanUf}`, 'i'),
+    // "NOME COMPLETO (12345/AM)"
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    // "NOME COMPLETO (OAB: 12345/AM)"
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*OAB\\s*[:\\-]?\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    // "ADVOGADO: NOME COMPLETO (12345/AM)"
+    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
+    // "NOME COMPLETO(OAB: 12345/AM)" without space before paren
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\(OAB:\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\)`, 'i'),
+    // "ADVOGADO NOME COMPLETO OAB/AM 12345" or "ADVOGADO NOME COMPLETO OAB: 12345/AM"
+    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*OAB\\s*[/:\\-]?\\s*${cleanUf}?\\s*[:\\-]?\\s*${cleanOab}`, 'i'),
+    // "NOME COMPLETO - OAB/AM 12345"
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*[-–]\\s*OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}`, 'i'),
+    // "OAB/AM nº 12345 ... NOME" (reversed)
+    new RegExp(`OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}[^\\n]{0,30}([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})`, 'i'),
+    // CNA JSON-like: "Nome": "VALUE"  
+    new RegExp(`NOME\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})[^\\n]{0,120}INSCRI[ÇC][ÃA]O\\s*[:\\-]?\\s*${cleanOab}[^\\n]{0,80}UF\\s*[:\\-]?\\s*${cleanUf}`, 'i'),
+    // JSON: "Nome": "VALUE"
+    /"Nome"\s*:\s*"([^"]{5,100})"/i,
   ];
 
   for (const pattern of primaryPatterns) {
