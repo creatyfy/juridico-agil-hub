@@ -1,9 +1,12 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { juditRequest } from "../_shared/judit-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
+
+const AI_GATEWAY = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 
 const validUFs = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT',
   'PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
@@ -30,27 +33,24 @@ serve(async (req: Request) => {
       );
     }
 
-    const cleanOab = String(oab).replace(/[^0-9]/g, '');
+    const cleanOab = String(oab).replace(/[^0-9]/g, '').replace(/^0+/, '');
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Judit API (async request + poll) — authoritative source
+    // Strategy 1: Judit API via shared client (same as search-processes)
     const juditResult = await tryJuditOab(cleanOab, uf);
     if (juditResult) {
       console.log(`Found via Judit API: ${juditResult.nome}`);
       return jsonResponse(juditResult);
     }
 
-    // Strategy 2: Firecrawl strict search (web-based fallback)
-    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-    if (firecrawlKey) {
-      const fallbackResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
-      if (fallbackResult) {
-        console.log(`Found via Firecrawl: ${fallbackResult.nome}`);
-        return jsonResponse(fallbackResult);
-      }
+    // Strategy 2: Firecrawl + AI extraction
+    const fallbackResult = await tryFirecrawlWithAI(cleanOab, uf);
+    if (fallbackResult) {
+      console.log(`Found via Firecrawl+AI: ${fallbackResult.nome}`);
+      return jsonResponse(fallbackResult);
     }
 
-    // Strategy 3: Official CNA endpoint
+    // Strategy 3: CNA
     const cnaResult = await tryDirectCNA(cleanOab, uf);
     if (cnaResult) {
       console.log(`Found via CNA: ${cnaResult.nome}`);
@@ -73,79 +73,76 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-// ─── Strategy 1: Judit API ───────────────────────────────────────────────────
+// ─── Strategy 1: Judit API (shared client with retries) ──────────────────────
 
 async function tryJuditOab(oab: string, uf: string) {
   const apiKey = Deno.env.get('JUDIT_API_KEY');
   if (!apiKey) {
-    console.log('JUDIT_API_KEY not configured, skipping Judit');
+    console.log('JUDIT_API_KEY not set, skipping');
     return null;
   }
 
   try {
     const searchKey = `${oab}/${uf}`;
-    console.log(`Judit async request for OAB: ${searchKey}`);
+    console.log(`Judit: creating OAB request for ${searchKey}`);
 
-    // Create request
-    const createRes = await fetchWithTimeout('https://requests.prod.judit.io/requests', {
+    // Use the shared judit-client with retries & circuit breaker
+    const createData = await juditRequest({
+      tenantKey: 'validate-oab',
+      apiKey,
+      path: '/requests',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': apiKey },
-      body: JSON.stringify({
+      body: {
         search: {
           search_type: 'oab',
           search_key: searchKey,
           response_type: 'lawsuits',
         },
-      }),
-    }, 10000);
+      },
+      timeoutMs: 10000,
+    }) as { request_id?: string };
 
-    if (!createRes.ok) {
-      const errText = await createRes.text();
-      console.error(`Judit create failed [${createRes.status}]: ${errText.slice(0, 200)}`);
-      return null;
-    }
-
-    const createData = await createRes.json();
     const requestId = createData?.request_id;
     if (!requestId) {
-      console.error('Judit: no request_id returned');
+      console.error('Judit: no request_id in response', JSON.stringify(createData).slice(0, 200));
       return null;
     }
 
     console.log(`Judit request created: ${requestId}`);
 
-    // Poll for completion (max ~14s, every 2s)
+    // Poll for completion (max ~20s, every 3s)
     for (let i = 0; i < 7; i++) {
-      await sleep(2000);
+      await sleep(3000);
 
-      const statusRes = await fetchWithTimeout(
-        `https://requests.prod.judit.io/requests/${requestId}`,
-        { headers: { 'api-key': apiKey } },
-        8000,
-      );
+      try {
+        const statusData = await juditRequest({
+          tenantKey: 'validate-oab',
+          apiKey,
+          path: `/requests/${requestId}`,
+          timeoutMs: 8000,
+        }) as { status?: string; request_status?: string };
 
-      if (!statusRes.ok) { await statusRes.text(); continue; }
+        const st = statusData?.status || statusData?.request_status;
+        console.log(`Judit poll #${i + 1}: status=${st}`);
 
-      const statusData = await statusRes.json();
-      const status = statusData?.status;
-      console.log(`Judit poll #${i + 1}: status=${status}`);
+        if (st === 'done' || st === 'completed') {
+          const resultsData = await juditRequest({
+            tenantKey: 'validate-oab',
+            apiKey,
+            path: `/responses?request_id=${requestId}&page=1&page_size=10`,
+            timeoutMs: 8000,
+          }) as Record<string, unknown>;
 
-      if (status === 'done' || status === 'completed') {
-        // Fetch results
-        const resultsRes = await fetchWithTimeout(
-          `https://requests.prod.judit.io/responses?request_id=${requestId}&page=1&page_size=10`,
-          { headers: { 'api-key': apiKey } },
-          8000,
-        );
-        if (!resultsRes.ok) { await resultsRes.text(); return null; }
+          return extractLawyerFromJuditResults(resultsData, oab, uf);
+        }
 
-        const resultsData = await resultsRes.json();
-        return extractLawyerFromJuditResults(resultsData, oab, uf);
-      }
-
-      if (status === 'error' || status === 'failed') {
-        console.error(`Judit request failed with status: ${status}`);
-        return null;
+        if (st === 'error' || st === 'failed') {
+          console.error(`Judit request failed: ${st}`);
+          return null;
+        }
+      } catch (pollErr) {
+        console.error(`Judit poll error: ${(pollErr as Error).message}`);
+        continue;
       }
     }
 
@@ -250,92 +247,151 @@ function matchLawyer(lawyer: Record<string, unknown>, oab: string, uf: string, c
   }
 }
 
-// ─── Strategy 2: Firecrawl strict search ─────────────────────────────────────
+// ─── Strategy 2: Firecrawl + AI extraction ───────────────────────────────────
 
-async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
+async function tryFirecrawlWithAI(oab: string, uf: string) {
+  const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
+  if (!firecrawlKey) { console.log('FIRECRAWL_API_KEY not set'); return null; }
+
   try {
     const queries = [
+      `advogado OAB ${oab}/${uf}`,
+      `"OAB/${uf}" "${oab}" advogado nome`,
       `"${oab}/${uf}" advogado`,
-      `"OAB/${uf}" "${oab}" advogado`,
-      `"${oab}" "${uf}" "advogado"`,
     ];
 
-    const candidateScores = new Map<string, number>();
+    const allTexts: string[] = [];
 
     for (const query of queries) {
       console.log(`Firecrawl search: "${query}"`);
 
-      const response = await fetchWithTimeout('https://api.firecrawl.dev/v1/search', {
+      const res = await fetchWithTimeout('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, limit: 10, lang: 'pt-br', country: 'br' }),
-      }, 10000);
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, limit: 5, lang: 'pt-br', country: 'br' }),
+      }, 15000);
 
-      if (!response.ok) {
-        console.error(`Firecrawl failed: ${response.status}`);
-        await response.text();
+      if (!res.ok) {
+        console.error(`Firecrawl failed: ${res.status}`);
+        await res.text();
         continue;
       }
 
-      const data = await response.json();
+      const data = await res.json();
       const results = data?.data || data?.results || [];
 
-      for (const result of results) {
-        const text = [result.title || '', result.description || '', result.markdown || '', result.content || ''].join('\n');
-        if (!containsExactOabUf(text, oab, uf)) continue;
-
-        const name = extractLawyerName(text, oab, uf);
-        if (!name) continue;
-
-        const normalized = name.toUpperCase().replace(/\s+/g, ' ').trim();
-        candidateScores.set(normalized, (candidateScores.get(normalized) ?? 0) + 1);
+      for (const r of results) {
+        const text = [r.title || '', r.description || '', r.markdown || '', r.content || ''].join('\n');
+        if (text.includes(oab)) {
+          allTexts.push(text.slice(0, 2000));
+        }
       }
+
+      if (allTexts.length >= 3) break;
     }
 
-    if (candidateScores.size === 0) return null;
+    if (allTexts.length === 0) {
+      console.log('Firecrawl: no results mentioning this OAB');
+      return null;
+    }
 
-    const [bestName] = [...candidateScores.entries()].sort((a, b) => b[1] - a[1])[0];
-    return { nome: bestName, status: 'ativo' as const, inscricao: oab, uf, fonte: 'firecrawl' };
+    console.log(`Firecrawl: ${allTexts.length} results found, extracting name...`);
+
+    // Try AI extraction first
+    const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+    if (lovableKey) {
+      const aiResult = await extractWithAI(allTexts.join('\n---\n'), oab, uf, lovableKey);
+      if (aiResult) return aiResult;
+    }
+
+    // Regex fallback
+    return extractWithRegex(allTexts, oab, uf);
   } catch (error) {
-    console.error('Firecrawl error:', (error as Error).message);
+    console.error('Firecrawl+AI error:', (error as Error).message);
     return null;
   }
 }
 
-function containsExactOabUf(text: string, oab: string, uf: string) {
-  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-  const patterns = [
-    new RegExp(`\\b${oab}\\s*/\\s*${uf}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${uf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${oab}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${oab}\\s*/\\s*${uf}\\b`, 'i'),
-  ];
-  return patterns.some(p => p.test(normalized));
+async function extractWithAI(searchText: string, oab: string, uf: string, apiKey: string) {
+  try {
+    const prompt = `Extraia o nome completo do advogado com OAB número ${oab} do estado ${uf} a partir dos textos abaixo.
+
+REGRAS ESTRITAS:
+- Retorne APENAS o nome completo do advogado em letras MAIÚSCULAS
+- O nome deve ter pelo menos nome e sobrenome
+- Se não encontrar com certeza, retorne exatamente: NAO_ENCONTRADO
+- Não invente nomes. Use apenas o que está nos textos.
+- Retorne somente o advogado com OAB ${oab}/${uf}, não outro.
+
+TEXTOS:
+${searchText.slice(0, 6000)}
+
+RESPOSTA (apenas o nome ou NAO_ENCONTRADO):`;
+
+    const aiRes = await fetchWithTimeout(AI_GATEWAY, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0,
+      }),
+    }, 15000);
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text();
+      console.error(`AI failed [${aiRes.status}]: ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const aiData = await aiRes.json();
+    const rawName = aiData?.choices?.[0]?.message?.content?.trim();
+    console.log(`AI response: "${rawName}"`);
+
+    if (!rawName || rawName === 'NAO_ENCONTRADO' || rawName.length < 5) return null;
+
+    const cleanName = rawName.toUpperCase().replace(/[^A-ZÀ-ÖØ-Ý\s]/g, '').replace(/\s+/g, ' ').trim();
+    if (cleanName.split(/\s+/).length < 2) return null;
+
+    return { nome: cleanName, status: 'ativo' as const, inscricao: oab, uf, fonte: 'firecrawl_ai' };
+  } catch (error) {
+    console.error('AI extraction error:', (error as Error).message);
+    return null;
+  }
 }
 
-function extractLawyerName(text: string, oab: string, uf: string): string | null {
-  if (!text) return null;
+function extractWithRegex(texts: string[], oab: string, uf: string) {
+  const candidates = new Map<string, number>();
   const patterns = [
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*(?:OAB\\s*[:\\-]?\\s*)?${oab}\\s*\\/\\s*${uf}\\s*\\)`, 'i'),
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*(?:OAB\\s*[:\\-]?\\s*)?${oab}\\s*\\/\\s*${uf}\\s*\\)`, 'i'),
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*[-–]\\s*OAB\\s*[/:]?\\s*${uf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${oab}`, 'i'),
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\(OAB:\\s*${oab}\\s*\\/\\s*${uf}\\)`, 'i'),
-    /"Nome"\s*:\s*"([^"]{5,100})"/i,
+    new RegExp(`([A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý.\\s]{4,80})\\s*\\(?\\s*(?:OAB\\s*[:\\-]?\\s*)?${oab}\\s*/\\s*${uf}\\s*\\)?`, 'gi'),
+    new RegExp(`(?:OAB|Advogad[oa])\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ýa-zà-öø-ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý.\\s]{4,80})\\s*[-–]?\\s*${oab}\\s*/\\s*${uf}`, 'gi'),
   ];
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match?.[1]) continue;
-    const cleaned = match[1].replace(/\s+/g, ' ').replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?)+\s+/i, '').trim();
-    if (cleaned.length >= 5 && cleaned.split(/\s+/).length >= 2) return cleaned;
+  for (const text of texts) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const cleaned = match[1].replace(/\s+/g, ' ').replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?)+\s+/i, '').trim();
+        if (cleaned.length >= 5 && cleaned.split(/\s+/).length >= 2) {
+          const n = cleaned.toUpperCase();
+          candidates.set(n, (candidates.get(n) || 0) + 1);
+        }
+      }
+    }
   }
-  return null;
+
+  if (candidates.size === 0) return null;
+  const [bestName] = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0];
+  return { nome: bestName, status: 'ativo' as const, inscricao: oab, uf, fonte: 'firecrawl' };
 }
 
 // ─── Strategy 3: CNA ────────────────────────────────────────────────────────
 
 async function tryDirectCNA(oab: string, uf: string) {
   try {
-    console.log('Trying CNA official flow...');
+    console.log('Trying CNA...');
     const pageRes = await fetchWithTimeout('https://cna.oab.org.br/', {
       headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' },
     }, 8000);
