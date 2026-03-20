@@ -258,6 +258,9 @@ async function tryFirecrawlWithAI(oab: string, uf: string) {
       `advogado OAB ${oab}/${uf}`,
       `"OAB/${uf}" "${oab}" advogado nome`,
       `"${oab}/${uf}" advogado`,
+      `site:jusbrasil.com.br OAB ${oab} ${uf}`,
+      `site:escavador.com OAB ${oab} ${uf}`,
+      `"${oab}" OAB "${uf}" advogado nome completo`,
     ];
 
     const allTexts: string[] = [];
@@ -288,6 +291,29 @@ async function tryFirecrawlWithAI(oab: string, uf: string) {
       }
 
       if (allTexts.length >= 3) break;
+    }
+
+    // If still no results, try broader search
+    if (allTexts.length === 0) {
+      console.log('Firecrawl: trying broader search...');
+      const broadRes = await fetchWithTimeout('https://api.firecrawl.dev/v1/search', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `"${oab}" "${uf}" advogado`, limit: 10, lang: 'pt-br', country: 'br' }),
+      }, 15000);
+
+      if (broadRes.ok) {
+        const broadData = await broadRes.json();
+        const broadResults = broadData?.data || broadData?.results || [];
+        for (const r of broadResults) {
+          const text = [r.title || '', r.description || '', r.markdown || '', r.content || ''].join('\n');
+          if (text.includes(oab)) {
+            allTexts.push(text.slice(0, 2000));
+          }
+        }
+      } else {
+        await broadRes.text();
+      }
     }
 
     if (allTexts.length === 0) {
