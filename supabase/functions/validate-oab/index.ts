@@ -8,14 +8,6 @@ const corsHeaders = {
 const validUFs = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT',
   'PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
 
-const UF_NAMES: Record<string, string> = {
-  'AC':'Acre','AL':'Alagoas','AM':'Amazonas','AP':'Amapá','BA':'Bahia','CE':'Ceará',
-  'DF':'Distrito Federal','ES':'Espírito Santo','GO':'Goiás','MA':'Maranhão','MG':'Minas Gerais',
-  'MS':'Mato Grosso do Sul','MT':'Mato Grosso','PA':'Pará','PB':'Paraíba','PE':'Pernambuco',
-  'PI':'Piauí','PR':'Paraná','RJ':'Rio de Janeiro','RN':'Rio Grande do Norte','RO':'Rondônia',
-  'RR':'Roraima','RS':'Rio Grande do Sul','SC':'Santa Catarina','SE':'Sergipe','SP':'São Paulo','TO':'Tocantins'
-};
-
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -39,50 +31,227 @@ serve(async (req: Request) => {
     }
 
     const cleanOab = String(oab).replace(/[^0-9]/g, '');
-    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Official CNA endpoint (authoritative)
-    const directResult = await tryDirectCNA(cleanOab, uf);
-    if (directResult) {
-      console.log(`Found via CNA official endpoint: ${directResult.nome}`);
-      return new Response(
-        JSON.stringify(directResult),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    // Strategy 1: Judit API (async request + poll) — authoritative source
+    const juditResult = await tryJuditOab(cleanOab, uf);
+    if (juditResult) {
+      console.log(`Found via Judit API: ${juditResult.nome}`);
+      return jsonResponse(juditResult);
     }
 
-    // Strategy 2: strict fallback with exact OAB/UF pair to avoid wrong lawyer names
+    // Strategy 2: Firecrawl strict search (web-based fallback)
+    const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
     if (firecrawlKey) {
       const fallbackResult = await searchOabViaFirecrawl(cleanOab, uf, firecrawlKey);
       if (fallbackResult) {
-        console.log(`Found via strict fallback: ${fallbackResult.nome}`);
-        return new Response(
-          JSON.stringify(fallbackResult),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        console.log(`Found via Firecrawl: ${fallbackResult.nome}`);
+        return jsonResponse(fallbackResult);
       }
     }
 
+    // Strategy 3: Official CNA endpoint
+    const cnaResult = await tryDirectCNA(cleanOab, uf);
+    if (cnaResult) {
+      console.log(`Found via CNA: ${cnaResult.nome}`);
+      return jsonResponse(cnaResult);
+    }
+
     console.log(`OAB ${cleanOab}/${uf} not found by any strategy`);
-    return new Response(
-      JSON.stringify({ nome: null, status: 'nao_encontrado' }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({ nome: null, status: 'nao_encontrado' });
 
   } catch (error: unknown) {
     console.error('Error:', error);
-    return new Response(
-      JSON.stringify({ nome: null, status: 'nao_encontrado', message: 'Erro ao consultar OAB' }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse({ nome: null, status: 'nao_encontrado', message: 'Erro ao consultar OAB' });
   }
 });
 
-/**
- * Strategy 2: Firecrawl fallback with strict OAB/UF matching + consensus by frequency
- */
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+// ─── Strategy 1: Judit API ───────────────────────────────────────────────────
+
+async function tryJuditOab(oab: string, uf: string) {
+  const apiKey = Deno.env.get('JUDIT_API_KEY');
+  if (!apiKey) {
+    console.log('JUDIT_API_KEY not configured, skipping Judit');
+    return null;
+  }
+
+  try {
+    const searchKey = `${oab}/${uf}`;
+    console.log(`Judit async request for OAB: ${searchKey}`);
+
+    // Create request
+    const createRes = await fetchWithTimeout('https://requests.prod.judit.io/requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': apiKey },
+      body: JSON.stringify({
+        search: {
+          search_type: 'oab',
+          search_key: searchKey,
+          response_type: 'lawsuits',
+        },
+      }),
+    }, 10000);
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      console.error(`Judit create failed [${createRes.status}]: ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const createData = await createRes.json();
+    const requestId = createData?.request_id;
+    if (!requestId) {
+      console.error('Judit: no request_id returned');
+      return null;
+    }
+
+    console.log(`Judit request created: ${requestId}`);
+
+    // Poll for completion (max ~14s, every 2s)
+    for (let i = 0; i < 7; i++) {
+      await sleep(2000);
+
+      const statusRes = await fetchWithTimeout(
+        `https://requests.prod.judit.io/requests/${requestId}`,
+        { headers: { 'api-key': apiKey } },
+        8000,
+      );
+
+      if (!statusRes.ok) { await statusRes.text(); continue; }
+
+      const statusData = await statusRes.json();
+      const status = statusData?.status;
+      console.log(`Judit poll #${i + 1}: status=${status}`);
+
+      if (status === 'done' || status === 'completed') {
+        // Fetch results
+        const resultsRes = await fetchWithTimeout(
+          `https://requests.prod.judit.io/responses?request_id=${requestId}&page=1&page_size=10`,
+          { headers: { 'api-key': apiKey } },
+          8000,
+        );
+        if (!resultsRes.ok) { await resultsRes.text(); return null; }
+
+        const resultsData = await resultsRes.json();
+        return extractLawyerFromJuditResults(resultsData, oab, uf);
+      }
+
+      if (status === 'error' || status === 'failed') {
+        console.error(`Judit request failed with status: ${status}`);
+        return null;
+      }
+    }
+
+    console.log('Judit: polling timeout');
+    return null;
+  } catch (error) {
+    console.error('Judit error:', (error as Error).message);
+    return null;
+  }
+}
+
+function extractLawyerFromJuditResults(data: Record<string, unknown>, oab: string, uf: string) {
+  const pageData = (data.page_data || data.data || []) as Record<string, unknown>[];
+  if (!Array.isArray(pageData) || pageData.length === 0) return null;
+
+  const candidates = new Map<string, number>();
+
+  for (const item of pageData.slice(0, 20)) {
+    const responseData = (item.response_data || item) as Record<string, unknown>;
+    findLawyerInObject(responseData, oab, uf, candidates);
+  }
+
+  if (candidates.size === 0) return null;
+
+  const [bestName] = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0];
+  console.log(`Judit extracted: ${bestName} (from ${candidates.size} candidates)`);
+
+  return {
+    nome: bestName,
+    status: 'ativo' as const,
+    inscricao: oab,
+    uf,
+    fonte: 'judit',
+  };
+}
+
+function findLawyerInObject(obj: Record<string, unknown>, oab: string, uf: string, candidates: Map<string, number>) {
+  // Search in lawyers/advogados arrays at any level
+  const lawyerArrays = ['lawyers', 'advogados', 'attorneys'];
+  const partyArrays = ['parties', 'partes'];
+
+  for (const key of lawyerArrays) {
+    const lawyers = obj[key] as Record<string, unknown>[] | undefined;
+    if (Array.isArray(lawyers)) {
+      for (const lawyer of lawyers) {
+        matchLawyer(lawyer, oab, uf, candidates);
+      }
+    }
+  }
+
+  for (const key of partyArrays) {
+    const parties = obj[key] as Record<string, unknown>[] | undefined;
+    if (Array.isArray(parties)) {
+      for (const party of parties) {
+        for (const lKey of lawyerArrays) {
+          const lawyers = party[lKey] as Record<string, unknown>[] | undefined;
+          if (Array.isArray(lawyers)) {
+            for (const lawyer of lawyers) {
+              matchLawyer(lawyer, oab, uf, candidates);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Check nested structures (last_step, steps)
+  if (obj.last_step && typeof obj.last_step === 'object') {
+    findLawyerInObject(obj.last_step as Record<string, unknown>, oab, uf, candidates);
+  }
+  const steps = obj.steps as Record<string, unknown>[] | undefined;
+  if (Array.isArray(steps)) {
+    for (const step of steps.slice(0, 5)) {
+      findLawyerInObject(step, oab, uf, candidates);
+    }
+  }
+
+  // Deep JSON string search as last resort
+  if (candidates.size === 0) {
+    const jsonStr = JSON.stringify(obj);
+    const nameMatch = jsonStr.match(
+      new RegExp(`"(?:name|nome)"\\s*:\\s*"([^"]{5,100})"[^}]{0,300}"(?:oab|inscription|inscricao)"\\s*:\\s*"?${oab}`, 'i')
+    ) || jsonStr.match(
+      new RegExp(`"(?:oab|inscription|inscricao)"\\s*:\\s*"?${oab}"?[^}]{0,300}"(?:name|nome)"\\s*:\\s*"([^"]{5,100})"`, 'i')
+    );
+    if (nameMatch?.[1]) {
+      const normalized = nameMatch[1].toUpperCase().replace(/\s+/g, ' ').trim();
+      if (normalized.split(/\s+/).length >= 2) {
+        candidates.set(normalized, (candidates.get(normalized) || 0) + 1);
+      }
+    }
+  }
+}
+
+function matchLawyer(lawyer: Record<string, unknown>, oab: string, uf: string, candidates: Map<string, number>) {
+  const lawyerOab = String(lawyer.oab || lawyer.inscription || lawyer.inscricao || '').replace(/\D/g, '');
+  const lawyerName = String(lawyer.name || lawyer.nome || '');
+
+  if (lawyerOab === oab && lawyerName.length >= 5 && lawyerName.split(/\s+/).length >= 2) {
+    const normalized = lawyerName.toUpperCase().replace(/\s+/g, ' ').trim();
+    candidates.set(normalized, (candidates.get(normalized) || 0) + 1);
+  }
+}
+
+// ─── Strategy 2: Firecrawl strict search ─────────────────────────────────────
+
 async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
   try {
     const queries = [
@@ -94,245 +263,137 @@ async function searchOabViaFirecrawl(oab: string, uf: string, apiKey: string) {
     const candidateScores = new Map<string, number>();
 
     for (const query of queries) {
-      console.log(`Firecrawl strict search: "${query}"`);
+      console.log(`Firecrawl search: "${query}"`);
 
-      const response = await fetch('https://api.firecrawl.dev/v1/search', {
+      const response = await fetchWithTimeout('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query,
-          limit: 10,
-          lang: 'pt-br',
-          country: 'br',
-        }),
-      });
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, limit: 10, lang: 'pt-br', country: 'br' }),
+      }, 10000);
 
       if (!response.ok) {
-        console.error(`Firecrawl search failed: ${response.status}`);
+        console.error(`Firecrawl failed: ${response.status}`);
+        await response.text();
         continue;
       }
 
       const data = await response.json();
       const results = data?.data || data?.results || [];
-      console.log(`Firecrawl strict search returned ${results.length} results`);
 
       for (const result of results) {
-        const text = [
-          result.title || '',
-          result.description || '',
-          result.markdown || '',
-          result.content || '',
-        ].join('\n');
-
+        const text = [result.title || '', result.description || '', result.markdown || '', result.content || ''].join('\n');
         if (!containsExactOabUf(text, oab, uf)) continue;
 
         const name = extractLawyerName(text, oab, uf);
         if (!name) continue;
 
-        const normalizedName = name.toUpperCase().replace(/\s+/g, ' ').trim();
-        const previous = candidateScores.get(normalizedName) ?? 0;
-        candidateScores.set(normalizedName, previous + 1);
+        const normalized = name.toUpperCase().replace(/\s+/g, ' ').trim();
+        candidateScores.set(normalized, (candidateScores.get(normalized) ?? 0) + 1);
       }
     }
 
     if (candidateScores.size === 0) return null;
 
     const [bestName] = [...candidateScores.entries()].sort((a, b) => b[1] - a[1])[0];
-
-    return {
-      nome: bestName,
-      status: 'ativo' as const,
-      inscricao: oab,
-      uf,
-    };
+    return { nome: bestName, status: 'ativo' as const, inscricao: oab, uf, fonte: 'firecrawl' };
   } catch (error) {
-    console.error('Firecrawl strict search error:', error);
+    console.error('Firecrawl error:', (error as Error).message);
     return null;
   }
 }
 
-/**
- * Strategy 1: Official CNA endpoint flow (GET form + POST search)
- */
+function containsExactOabUf(text: string, oab: string, uf: string) {
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  const patterns = [
+    new RegExp(`\\b${oab}\\s*/\\s*${uf}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${uf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${oab}\\b`, 'i'),
+    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${oab}\\s*/\\s*${uf}\\b`, 'i'),
+  ];
+  return patterns.some(p => p.test(normalized));
+}
+
+function extractLawyerName(text: string, oab: string, uf: string): string | null {
+  if (!text) return null;
+  const patterns = [
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*(?:OAB\\s*[:\\-]?\\s*)?${oab}\\s*\\/\\s*${uf}\\s*\\)`, 'i'),
+    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*(?:OAB\\s*[:\\-]?\\s*)?${oab}\\s*\\/\\s*${uf}\\s*\\)`, 'i'),
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*[-–]\\s*OAB\\s*[/:]?\\s*${uf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${oab}`, 'i'),
+    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\(OAB:\\s*${oab}\\s*\\/\\s*${uf}\\)`, 'i'),
+    /"Nome"\s*:\s*"([^"]{5,100})"/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    const cleaned = match[1].replace(/\s+/g, ' ').replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?)+\s+/i, '').trim();
+    if (cleaned.length >= 5 && cleaned.split(/\s+/).length >= 2) return cleaned;
+  }
+  return null;
+}
+
+// ─── Strategy 3: CNA ────────────────────────────────────────────────────────
+
 async function tryDirectCNA(oab: string, uf: string) {
   try {
-    const baseUrl = 'https://cna.oab.org.br/';
-    const searchUrl = 'https://cna.oab.org.br/Home/Search';
-    console.log(`Trying CNA official flow: ${searchUrl}`);
+    console.log('Trying CNA official flow...');
+    const pageRes = await fetchWithTimeout('https://cna.oab.org.br/', {
+      headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' },
+    }, 8000);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const html = await pageRes.text();
+    const tokenMatch = html.match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/i);
+    if (!tokenMatch?.[1]) return null;
 
-    const pageResponse = await fetch(baseUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: controller.signal,
-    });
-
-    const pageHtml = await pageResponse.text();
-    const tokenMatch = pageHtml.match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/i);
-    const verificationToken = tokenMatch?.[1] ?? '';
-
-    if (!verificationToken) {
-      clearTimeout(timeout);
-      console.log('CNA token not found, skipping direct flow');
-      return null;
-    }
-
-    const formData = new URLSearchParams({
-      __RequestVerificationToken: verificationToken,
-      NomeAdvo: '',
-      Insc: oab,
-      Uf: uf,
-      TipoInsc: '',
-    });
-
-    const searchResponse = await fetch(searchUrl, {
+    const searchRes = await fetchWithTimeout('https://cna.oab.org.br/Home/Search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0',
       },
-      body: formData.toString(),
-      signal: controller.signal,
-    });
+      body: new URLSearchParams({
+        __RequestVerificationToken: tokenMatch[1],
+        NomeAdvo: '', Insc: oab, Uf: uf, TipoInsc: '',
+      }).toString(),
+    }, 8000);
 
-    clearTimeout(timeout);
+    const text = await searchRes.text();
+    if (!searchRes.ok) return null;
 
-    const text = await searchResponse.text();
-    if (searchResponse.ok) {
-      const parsed = parseCNAJson(text, oab, uf);
-      if (parsed) return parsed;
-
-      try {
-        const cnaResponse = JSON.parse(text);
-        if (cnaResponse?.Message) {
-          console.log(`CNA message: ${cnaResponse.Message}`);
-        }
-      } catch {
-        // ignore
+    try {
+      const cna = JSON.parse(text);
+      if (cna.Success && cna.Data?.length > 0) {
+        const lawyer = cna.Data[0];
+        return {
+          nome: lawyer.Nome?.toUpperCase() || null,
+          status: 'ativo' as const,
+          inscricao: lawyer.Inscricao || oab,
+          uf: lawyer.UF || uf,
+          tipo: lawyer.TipoInscOab || null,
+          fonte: 'cna',
+        };
       }
-    }
+    } catch { /* not JSON */ }
 
-    console.log(`CNA response status: ${searchResponse.status}`);
+    return null;
   } catch (error) {
-    console.error('Direct CNA error:', (error as Error).message);
+    console.error('CNA error:', (error as Error).message);
+    return null;
   }
-  return null;
 }
 
-function normalizeTextForMatch(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase();
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function containsExactOabUf(text: string, oab: string, uf: string) {
-  const normalizedText = normalizeTextForMatch(text);
-  const cleanOab = oab.replace(/\D/g, '');
-  const cleanUf = uf.toUpperCase();
-
-  const patterns = [
-    new RegExp(`\\b${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[/:\\-]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?o?\\s*${cleanOab}\\b`, 'i'),
-    new RegExp(`\\bOAB\\s*[:\\-]?\\s*${cleanOab}\\s*/\\s*${cleanUf}\\b`, 'i'),
-    new RegExp(`\\bINSCRICAO\\s*[:\\-]?\\s*${cleanOab}[\\s\\S]{0,60}\\bUF\\s*[:\\-]?\\s*${cleanUf}\\b`, 'i'),
-  ];
-
-  return patterns.some((pattern) => pattern.test(normalizedText));
-}
-
-/**
- * Extract lawyer name strictly associated with the exact OAB/UF pair
- */
-function extractLawyerName(text: string, oab: string, uf: string): string | null {
-  if (!text) return null;
-
-  const cleanUf = uf.toUpperCase();
-  const cleanOab = oab.replace(/\D/g, '');
-
-  const primaryPatterns = [
-    // "NOME COMPLETO (12345/AM)"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "NOME COMPLETO (OAB: 12345/AM)"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*OAB\\s*[:\\-]?\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "ADVOGADO: NOME COMPLETO (12345/AM)"
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*\\(\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\s*\\)`, 'i'),
-    // "NOME COMPLETO(OAB: 12345/AM)" without space before paren
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\(OAB:\\s*${cleanOab}\\s*\\/\\s*${cleanUf}\\)`, 'i'),
-    // "ADVOGADO NOME COMPLETO OAB/AM 12345" or "ADVOGADO NOME COMPLETO OAB: 12345/AM"
-    new RegExp(`ADVOGAD[OA]\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*OAB\\s*[/:\\-]?\\s*${cleanUf}?\\s*[:\\-]?\\s*${cleanOab}`, 'i'),
-    // "NOME COMPLETO - OAB/AM 12345"
-    new RegExp(`([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})\\s*[-–]\\s*OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}`, 'i'),
-    // "OAB/AM nº 12345 ... NOME" (reversed)
-    new RegExp(`OAB\\s*[/:]?\\s*${cleanUf}\\s*[:\\-]?\\s*n?\\.?º?\\s*${cleanOab}[^\\n]{0,30}([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})`, 'i'),
-    // CNA JSON-like: "Nome": "VALUE"  
-    new RegExp(`NOME\\s*[:\\-]?\\s*([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ýa-zà-öø-ý\\.\\s]{4,90})[^\\n]{0,120}INSCRI[ÇC][ÃA]O\\s*[:\\-]?\\s*${cleanOab}[^\\n]{0,80}UF\\s*[:\\-]?\\s*${cleanUf}`, 'i'),
-    // JSON: "Nome": "VALUE"
-    /"Nome"\s*:\s*"([^"]{5,100})"/i,
-  ];
-
-  for (const pattern of primaryPatterns) {
-    const match = text.match(pattern);
-    if (!match?.[1]) continue;
-
-    const cleaned = sanitizeCandidateName(match[1]);
-    if (cleaned) return cleaned;
-  }
-
-  return null;
-}
-
-function sanitizeCandidateName(candidate: string): string | null {
-  const cleaned = candidate
-    .replace(/\s+/g, ' ')
-    .replace(/^(DRA?\.?|ADVOGAD[OA]\.?|DR\.?|SRA?\.?|SR\.?)+\s+/i, '')
-    .replace(/\s+(OAB|ADVOGAD[OA]|INSCRI[ÇC][ÃA]O|SECCIONAL|CONSELHO).*$/i, '')
-    .trim();
-
-  if (cleaned.length < 5) return null;
-  if (cleaned.split(/\s+/).length < 2) return null;
-  return cleaned;
-}
-
-function parseCNAJson(text: string, oab: string, uf: string) {
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const cnaData = JSON.parse(text);
-    if (cnaData.Success && cnaData.Data && cnaData.Data.length > 0) {
-      const lawyer = cnaData.Data[0];
-      console.log(`CNA JSON found: ${lawyer.Nome} (${lawyer.TipoInscOab})`);
-      return {
-        nome: lawyer.Nome?.toUpperCase() || null,
-        status: 'ativo' as const,
-        inscricao: lawyer.Inscricao || oab,
-        uf: lawyer.UF || uf,
-        tipo: lawyer.TipoInscOab || null,
-      };
-    }
-  } catch {
-    // Not valid JSON
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
   }
-  return null;
-}
-
-function extractFromMarkdown(text: string, oab: string, uf: string) {
-  const name = extractLawyerName(text, oab, uf);
-  if (name) {
-    return {
-      nome: name.toUpperCase(),
-      status: 'ativo' as const,
-      inscricao: oab,
-      uf,
-    };
-  }
-  return null;
 }
