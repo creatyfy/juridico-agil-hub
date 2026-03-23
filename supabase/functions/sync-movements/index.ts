@@ -147,8 +147,11 @@ serve(async (req) => {
   }
 
   try {
-    const JUDIT_API_KEY = Deno.env.get("JUDIT_API_KEY");
-    if (!JUDIT_API_KEY) throw new Error("JUDIT_API_KEY not configured");
+    // Judit API desabilitada temporariamente
+    console.log("sync-movements: Judit API desabilitada temporariamente, ignorando execução.");
+    return new Response(JSON.stringify({ results: [], message: "Judit API desabilitada temporariamente" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;

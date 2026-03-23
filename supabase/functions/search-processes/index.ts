@@ -38,6 +38,12 @@ serve(async (req) => {
 
     const { action, request_id, search_key, search_type } = parsed.data;
 
+    // Judit API desabilitada temporariamente
+    return new Response(JSON.stringify({ error: 'Consulta de processos via Judit API está temporariamente desabilitada.' }), {
+      status: 503,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
     if (action === 'create') {
       const data = await juditRequest({
         tenantKey: user.id,

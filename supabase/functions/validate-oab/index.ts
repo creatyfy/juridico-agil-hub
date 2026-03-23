@@ -36,12 +36,10 @@ serve(async (req: Request) => {
     const cleanOab = String(oab).replace(/[^0-9]/g, '').replace(/^0+/, '');
     console.log(`Validating OAB ${cleanOab}/${uf}...`);
 
-    // Strategy 1: Judit API via shared client (same as search-processes)
-    const juditResult = await tryJuditOab(cleanOab, uf);
-    if (juditResult) {
-      console.log(`Found via Judit API: ${juditResult.nome}`);
-      return jsonResponse(juditResult);
-    }
+    // Strategy 1: Judit API — DESABILITADA temporariamente
+    // const juditResult = await tryJuditOab(cleanOab, uf);
+    // if (juditResult) { return jsonResponse(juditResult); }
+    console.log('Judit API desabilitada temporariamente, pulando strategy 1');
 
     // Strategy 2: Firecrawl + AI extraction
     const fallbackResult = await tryFirecrawlWithAI(cleanOab, uf);
